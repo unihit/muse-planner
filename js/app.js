@@ -6,6 +6,17 @@
     reminder: { label: "알림", badge: "🔔 알림", icon: "🔔", color: "#f59e0b" }
   };
 
+  function isItemCheckable(itemOrType) {
+    const type = typeof itemOrType === "string" ? itemOrType : itemOrType?.type;
+    if (type === "reminder") return false;
+    if (type === "schedule" && prefs.trackScheduleDone === false) return false;
+    return true;
+  }
+
+  function isEffectiveDone(item) {
+    return Boolean(item && isItemCheckable(item) && item.done);
+  }
+
   let currentDate = PlannerAPI.todayKst();
   let prefs = PlannerAPI.getPrefs();
   let schedules = [];
@@ -208,6 +219,7 @@
     cascadeCheck: document.getElementById("cascadeCheck"),
     themeSelect: document.getElementById("themeSelect"),
     dimCompletedCheck: document.getElementById("dimCompletedCheck"),
+    trackScheduleDoneCheck: document.getElementById("trackScheduleDoneCheck"),
     browserNotifyCheck: document.getElementById("browserNotifyCheck"),
     showPlacedListCheck: document.getElementById("showPlacedListCheck"),
     showBacklogListCheck: document.getElementById("showBacklogListCheck"),
@@ -480,7 +492,7 @@
     }
 
     const activeEnd = ev.hasEndAt && ev.endMin !== null ? ev.endMin : ev.startMin + 30;
-    const isNow = !ev.done && ev.startMin <= nowMin && nowMin < activeEnd;
+    const isNow = !isEffectiveDone(ev) && ev.startMin <= nowMin && nowMin < activeEnd;
     const isPast = !isNow && activeEnd <= nowMin;
     return { isNow, isPast };
   }
@@ -1441,7 +1453,7 @@
         nextEndMinOrNull !== null ? nextEndMinOrNull : Math.min(1440, nextStartMin + 30);
       let cursor = movedAnchorVisualEnd;
       const others = schedules
-        .filter((s) => s.id !== ev.id && s.hasStartAt && !s.done && s.type !== "reminder")
+        .filter((s) => s.id !== ev.id && s.hasStartAt && !isEffectiveDone(s) && s.type !== "reminder")
         .sort((a, b) => a.startMin - b.startMin);
 
       for (const item of others) {
@@ -1569,6 +1581,7 @@
     if (el.cascadeCheck) el.cascadeCheck.checked = Boolean(prefs.cascadeMode);
     if (el.themeSelect) el.themeSelect.value = prefs.theme;
     if (el.dimCompletedCheck) el.dimCompletedCheck.checked = prefs.dimCompleted !== false;
+    if (el.trackScheduleDoneCheck) el.trackScheduleDoneCheck.checked = prefs.trackScheduleDone !== false;
     if (el.browserNotifyCheck) el.browserNotifyCheck.checked = Boolean(prefs.browserNotify);
     if (el.showPlacedListCheck) el.showPlacedListCheck.checked = prefs.showPlacedList !== false;
     if (el.placedSection) el.placedSection.classList.toggle("hidden", prefs.showPlacedList === false);
@@ -1706,8 +1719,8 @@
 
   function renderLeftPanel() {
     const sortDoneBottom = (arr) => [
-      ...arr.filter((s) => !s.done),
-      ...arr.filter((s) => s.done)
+      ...arr.filter((s) => !isEffectiveDone(s)),
+      ...arr.filter((s) => isEffectiveDone(s))
     ];
 
     const untimed = sortDoneBottom(schedules.filter((s) => !s.hasStartAt));
@@ -1717,12 +1730,14 @@
     el.untimedCount.textContent = String(untimed.length);
     el.reminderSummaryCount.textContent = String(reminders.length);
     if (el.mobileDockBadge) {
-      const pendingDockCount = untimed.filter((s) => !s.done).length;
+      const pendingDockCount = untimed.filter((s) => !isEffectiveDone(s)).length;
       el.mobileDockBadge.textContent = String(pendingDockCount);
       el.mobileDockBadge.classList.toggle("hidden", pendingDockCount === 0);
     }
 
-    const untimedKey = untimed.map((s) => `${s.id}:${s.done ? 1 : 0}:${s.type}:${s.title}`).join("|");
+    const untimedKey = untimed
+      .map((s) => `${s.id}:${isEffectiveDone(s) ? 1 : 0}:${isItemCheckable(s) ? 1 : 0}:${s.type}:${s.title}`)
+      .join("|");
     if (el.untimedList.dataset.renderKey !== untimedKey) {
       el.untimedList.dataset.renderKey = untimedKey;
       animateListReorder(el.untimedList, () => {
@@ -1732,21 +1747,24 @@
           return;
         }
         for (const item of untimed) {
+          const checkable = isItemCheckable(item);
+          const itemDone = isEffectiveDone(item);
           const card = document.createElement("div");
-          card.className = `dock-card ${item.done ? "is-done" : ""}`;
+          card.className = `dock-card ${itemDone ? "is-done" : ""}`;
           card.dataset.id = item.id;
           card.dataset.type = item.type;
           card.draggable = true;
 
           card.innerHTML = `
             <div class="dock-card-top">
-              ${item.type !== "reminder" ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
+              ${checkable ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
               <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
             </div>
             <div class="dock-card-meta">
               <span>${TYPE_META[item.type]?.label || "일정"}</span>
               <div class="dock-card-actions">
                 <button type="button" class="mini-btn place-btn" title="빈 시간에 배치">+ 배치</button>
+                <button type="button" class="mini-btn defer-btn" title="나중에 할 일(백로그)로 보관">📦</button>
                 <button type="button" class="mini-btn del del-btn" title="삭제">✕</button>
               </div>
             </div>
@@ -1764,6 +1782,10 @@
             const startMin = findNextAvailableSlot(30);
             const endMin = item.type === "reminder" ? null : Math.min(1440, startMin + 30);
             await commitScheduleTimeChange(item, startMin, endMin);
+          });
+
+          card.querySelector(".defer-btn").addEventListener("click", () => {
+            moveItemBetweenDayAndBacklog(item, null);
           });
 
           card.querySelector(".del-btn").addEventListener("click", () => {
@@ -1809,7 +1831,10 @@
         const placedKey =
           (prefs.placedTasksOnly ? "t:" : "a:") +
           placedFiltered
-            .map((s) => `${s.id}:${s.done ? 1 : 0}:${s.startMin}:${s.endMin ?? "n"}:${s.type}:${s.title}`)
+            .map(
+              (s) =>
+                `${s.id}:${isEffectiveDone(s) ? 1 : 0}:${isItemCheckable(s) ? 1 : 0}:${s.startMin}:${s.endMin ?? "n"}:${s.type}:${s.title}`
+            )
             .join("|");
         if (el.placedList.dataset.renderKey !== placedKey) {
           el.placedList.dataset.renderKey = placedKey;
@@ -1824,8 +1849,10 @@
               return;
             }
             for (const item of placedFiltered) {
+              const checkable = isItemCheckable(item);
+              const itemDone = isEffectiveDone(item);
               const card = document.createElement("div");
-              card.className = `dock-card is-placed ${item.done ? "is-done" : ""}`;
+              card.className = `dock-card is-placed ${itemDone ? "is-done" : ""}`;
               card.dataset.id = item.id;
               card.dataset.type = item.type;
               card.draggable = true;
@@ -1837,7 +1864,7 @@
 
               card.innerHTML = `
                 <div class="dock-card-top">
-                  ${item.type !== "reminder" ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
+                  ${checkable ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
                   <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
                 </div>
                 <div class="dock-card-meta">
@@ -1909,26 +1936,28 @@
 
       if (prefs.showBacklogList !== false) {
         const backlogKey = backlogSorted
-          .map((s) => `${s.id}:${s.done ? 1 : 0}:${s.type}:${s.title}`)
+          .map((s) => `${s.id}:${isEffectiveDone(s) ? 1 : 0}:${isItemCheckable(s) ? 1 : 0}:${s.type}:${s.title}`)
           .join("|");
         if (el.backlogList.dataset.renderKey !== backlogKey) {
           el.backlogList.dataset.renderKey = backlogKey;
           animateListReorder(el.backlogList, () => {
             el.backlogList.innerHTML = "";
             if (!backlogSorted.length) {
-              el.backlogList.innerHTML = `<div class="empty-hint">나중에 할 일이 없습니다.<br/>위에서 추가하거나 미배치·배치 항목을 여기로 끌어다 놓으세요.</div>`;
+              el.backlogList.innerHTML = `<div class="empty-hint">나중에 할 일이 없습니다.<br/>위에서 추가하거나 미배치 카드의 📦 버튼·드래그로 옮기세요.</div>`;
               return;
             }
             for (const item of backlogSorted) {
+              const checkable = isItemCheckable(item);
+              const itemDone = isEffectiveDone(item);
               const card = document.createElement("div");
-              card.className = `dock-card is-backlog ${item.done ? "is-done" : ""}`;
+              card.className = `dock-card is-backlog ${itemDone ? "is-done" : ""}`;
               card.dataset.id = item.id;
               card.dataset.type = item.type;
               card.draggable = true;
 
               card.innerHTML = `
                 <div class="dock-card-top">
-                  ${item.type !== "reminder" ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
+                  ${checkable ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
                   <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
                 </div>
                 <div class="dock-card-meta">
@@ -2124,6 +2153,8 @@
       const isFilteredOut = activeTypeFilter !== "all" && ev.type !== activeTypeFilter;
 
       const block = document.createElement("div");
+      const checkable = isItemCheckable(ev);
+      const isDone = isEffectiveDone(ev);
       block.className = [
         "event-block",
         `type-${ev.type}`,
@@ -2131,7 +2162,7 @@
         ev.visualEndMin >= 1380 ? "is-near-bottom" : "",
         isNow ? "is-now" : "",
         isPast ? "is-past" : "",
-        ev.done ? "is-done" : "",
+        isDone ? "is-done" : "",
         ev.id === selectedEventId ? "is-selected" : "",
         isFilteredOut ? "is-filtered-out" : ""
       ]
@@ -2159,7 +2190,7 @@
       block.innerHTML = `
         <div class="resize-handle top" title="위로 끌어 시작 시각 조절"></div>
         <div class="event-top-row">
-          <input type="checkbox" class="event-check" ${ev.done ? "checked" : ""} title="완료 체크" />
+          ${checkable ? `<input type="checkbox" class="event-check" ${ev.done ? "checked" : ""} title="완료 체크" />` : ""}
           <span class="event-title">${escapeHtml(ev.title)}</span>
           <div class="event-badges">
             ${isNow ? `<span class="badge-now">NOW</span>` : ""}
@@ -2185,11 +2216,14 @@
         <div class="resize-handle bottom" title="아래로 끌어 종료 시각 조절"></div>
       `;
 
-      block.querySelector(".event-check").addEventListener("pointerdown", (e) => e.stopPropagation());
-      block.querySelector(".event-check").addEventListener("change", (e) => {
-        e.stopPropagation();
-        toggleScheduleDone(ev.id, e.target.checked);
-      });
+      const blockCheckEl = block.querySelector(".event-check");
+      if (blockCheckEl) {
+        blockCheckEl.addEventListener("pointerdown", (e) => e.stopPropagation());
+        blockCheckEl.addEventListener("change", (e) => {
+          e.stopPropagation();
+          toggleScheduleDone(ev.id, e.target.checked);
+        });
+      }
 
       block.querySelectorAll(".q-btn").forEach((btn) => {
         btn.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -3041,7 +3075,7 @@
 
     const activeEv = isToday
       ? schedules.find((e) => {
-          if (!e.hasStartAt || e.done || e.type === "reminder") return false;
+          if (!e.hasStartAt || isEffectiveDone(e) || e.type === "reminder") return false;
           const end = e.hasEndAt && e.endMin !== null ? e.endMin : e.startMin + 30;
           return e.startMin <= nowMin && nowMin < end;
         }) ||
@@ -3053,7 +3087,7 @@
 
     const nextEv = isToday
       ? schedules
-          .filter((e) => e.hasStartAt && !e.done && e.startMin > nowMin)
+          .filter((e) => e.hasStartAt && !isEffectiveDone(e) && e.startMin > nowMin)
           .sort((a, b) => a.startMin - b.startMin)[0]
       : null;
 
@@ -3091,7 +3125,7 @@
       el.nowExtendBtn.classList.toggle("hidden", isReminder);
       el.nowPlus30Btn.classList.toggle("hidden", isReminder);
       el.nowStartNowBtn.classList.add("hidden");
-      el.nowDoneBtn.classList.toggle("hidden", isReminder);
+      el.nowDoneBtn.classList.toggle("hidden", !isItemCheckable(activeEv));
 
       el.nowMinusBtn.onclick = (e) => { e.stopPropagation(); handleQuickAction(activeEv.id, "minus15"); };
       el.nowExtendBtn.onclick = (e) => { e.stopPropagation(); handleQuickAction(activeEv.id, "plus15"); };
@@ -3124,7 +3158,7 @@
       el.nowStartNowBtn.onclick = (e) => { e.stopPropagation(); startScheduleNow(nextEv); };
       el.nowJumpBtn.onclick = (e) => { e.stopPropagation(); jumpToSchedule(nextEv); };
     } else {
-      const completable = schedules.filter((e) => e.type !== "reminder");
+      const completable = schedules.filter((e) => isItemCheckable(e));
       const doneCnt = completable.filter((e) => e.done).length;
       const donePct = completable.length ? Math.round((doneCnt / completable.length) * 100) : 100;
 
@@ -3163,17 +3197,17 @@
     // 다음 일정 & 남은 알림 하단 스트립
     const upNextEv = activeEv
       ? schedules
-          .filter((e) => e.hasStartAt && !e.done && e.id !== activeEv.id && e.startMin >= activeEv.startMin)
+          .filter((e) => e.hasStartAt && !isEffectiveDone(e) && e.id !== activeEv.id && e.startMin >= activeEv.startMin)
           .sort((a, b) => a.startMin - b.startMin)[0]
       : nextEv;
 
     if (activeEv && upNextEv) {
       el.islandNextInfo.innerHTML = `<span>다음 · <strong>${escapeHtml(upNextEv.title)}</strong></span><span>${minToTimeStr(upNextEv.startMin)}</span>`;
     } else if (!activeEv && nextEv) {
-      const remainCnt = schedules.filter((e) => e.type !== "reminder" && !e.done).length;
-      el.islandNextInfo.innerHTML = `<span>오늘 남은 미완료 일정</span><span>${remainCnt}건</span>`;
+      const remainCnt = schedules.filter((e) => isItemCheckable(e) && !e.done).length;
+      el.islandNextInfo.innerHTML = `<span>오늘 남은 미완료 항목</span><span>${remainCnt}건</span>`;
     } else {
-      const completable = schedules.filter((e) => e.type !== "reminder");
+      const completable = schedules.filter((e) => isItemCheckable(e));
       const doneCnt = completable.filter((e) => e.done).length;
       el.islandNextInfo.innerHTML = `<span>이후 예정된 일정 없음</span><span>${completable.length}건 중 ${doneCnt}건 완료</span>`;
     }
@@ -3205,8 +3239,7 @@
   /* -------------------- 우측 요약 & 위젯 -------------------- */
 
   function renderRightWidgets() {
-    const totalCount = schedules.length;
-    const completable = schedules.filter((e) => e.type !== "reminder");
+    const completable = schedules.filter((e) => isItemCheckable(e));
     const doneCount = completable.filter((e) => e.done).length;
     const remainCount = completable.length - doneCount;
     const pct = completable.length ? Math.round((doneCount / completable.length) * 100) : 0;
@@ -3227,10 +3260,16 @@
       const bucket = statsByType[s.type];
       if (!bucket) continue;
       bucket.total += 1;
-      if (s.type === "reminder") {
+      if (!isItemCheckable(s)) {
+        const refMin =
+          s.type === "reminder"
+            ? s.startMin
+            : s.hasEndAt && s.endMin !== null
+              ? s.endMin
+              : s.startMin + 30;
         const passed =
           s.hasStartAt &&
-          (currentDate < todayStr || (currentDate === todayStr && s.startMin <= nowMin));
+          (currentDate < todayStr || (currentDate === todayStr && refMin <= nowMin));
         if (passed) bucket.done += 1;
       } else if (s.done) {
         bucket.done += 1;
@@ -3363,7 +3402,7 @@
     const endField = el.editEnd?.closest(".field");
     if (endField) endField.classList.toggle("hidden", isReminder);
     const doneRow = el.editDone?.closest(".checkbox-row-inline");
-    if (doneRow) doneRow.classList.toggle("hidden", isReminder);
+    if (doneRow) doneRow.classList.toggle("hidden", !isItemCheckable(el.editType?.value || "schedule"));
 
     if (isReminder) {
       el.editHasEndCheck.checked = false;
@@ -3598,7 +3637,7 @@
 
     const nowMin = getNowKstMinutes();
     for (const ev of schedules) {
-      if (!ev || ev.done || !ev.hasStartAt) continue;
+      if (!ev || isEffectiveDone(ev) || !ev.hasStartAt) continue;
       const diff = nowMin - ev.startMin;
       if (diff < 0 || diff > 2) continue;
 
@@ -4039,6 +4078,18 @@
       showToast(prefs.dimCompleted ? "완료 일정을 흐리게 표시합니다." : "완료 일정을 선명하게 표시합니다.");
     });
 
+    el.trackScheduleDoneCheck?.addEventListener("change", (e) => {
+      prefs.trackScheduleDone = e.target.checked;
+      PlannerAPI.savePrefs(prefs);
+      applyPrefsToUI();
+      renderAll();
+      showToast(
+        prefs.trackScheduleDone
+          ? "일정(📅) 완료 체크박스를 사용합니다."
+          : "일정(📅)은 완료 체크 없이 시간 경과로 관리합니다."
+      );
+    });
+
     el.showPlacedListCheck?.addEventListener("change", (e) => {
       prefs.showPlacedList = e.target.checked;
       PlannerAPI.savePrefs(prefs);
@@ -4181,6 +4232,7 @@
       if (el.cascadeCheck) prefs.cascadeMode = el.cascadeCheck.checked;
       if (el.themeSelect) prefs.theme = el.themeSelect.value === "light" ? "light" : "dark";
       if (el.dimCompletedCheck) prefs.dimCompleted = el.dimCompletedCheck.checked;
+      if (el.trackScheduleDoneCheck) prefs.trackScheduleDone = el.trackScheduleDoneCheck.checked;
       if (el.browserNotifyCheck) {
         const canNotify = typeof Notification !== "undefined" && Notification.permission === "granted";
         prefs.browserNotify = Boolean(el.browserNotifyCheck.checked && canNotify);
@@ -4413,20 +4465,26 @@
         }
       }
 
+      const prevEv = id ? findItemById(id) : null;
+      const doneVal = isReminder
+        ? false
+        : isItemCheckable(typeVal)
+          ? el.editDone.checked
+          : Boolean(prevEv?.done);
+
       const payload = {
         date: dateVal,
         title: titleVal,
         type: typeVal,
         start_at: startAt,
         end_at: endAt,
-        done: isReminder ? false : el.editDone.checked,
+        done: doneVal,
         memo: el.editMemo.value
       };
 
       try {
         el.eventModal.classList.add("hidden");
         if (id) {
-          const prevEv = findItemById(id);
           const dateHint = prevEv ? prevEv.date : currentDate;
           lastUserMutationAt = Date.now();
           const updated = await PlannerAPI.patchSchedule(id, payload, dateHint);
