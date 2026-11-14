@@ -533,6 +533,22 @@ html[data-theme="light"] .now-banner.dynamic-island {
   text-overflow: ellipsis;
 }
 
+.island-live-action-btn {
+  pointer-events: auto;
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  transition: background 0.14s ease;
+}
+
+.island-live-action-btn:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+
 /* 확장 컨트롤 센터 */
 .island-expanded {
   position: absolute;
@@ -1010,7 +1026,8 @@ html[data-theme="light"] .action-btn {
 /* 좌측 Staging Dock */
 .left-panel.drop-active {
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 2px var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent-soft), 0 0 0 3px var(--accent-soft);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
 }
 
 .dock-drop-hint {
@@ -1022,11 +1039,63 @@ html[data-theme="light"] .action-btn {
   background: var(--accent-soft);
   text-align: center;
   font-size: 12px;
+  font-weight: 600;
   color: var(--accent-hover);
 }
 
-.left-panel.drop-active .dock-drop-hint {
+.left-panel.drop-active .dock-drop-hint,
+.left-panel.is-collapsed.drop-active .dock-drop-hint {
   display: block;
+}
+
+.dock-drag-ghost {
+  position: fixed;
+  z-index: 950;
+  transform: translate(-50%, -115%);
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 250px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  border: 1.5px solid var(--border-strong);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+  transition: border-color 0.12s ease, background-color 0.12s ease, transform 0.12s ease;
+}
+
+.dock-drag-ghost .dock-ghost-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 130px;
+}
+
+.dock-drag-ghost .dock-ghost-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.dock-drag-ghost.is-over-dock {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  transform: translate(-50%, -120%) scale(1.04);
+}
+
+.dock-drag-ghost.is-over-dock .dock-ghost-sub {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.event-block.is-unscheduling,
+.reminder-line-marker.is-unscheduling {
+  opacity: 0.32 !important;
+  filter: grayscale(0.4);
 }
 
 .quick-add-box {

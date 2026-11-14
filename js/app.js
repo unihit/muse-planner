@@ -60,6 +60,7 @@
     islandLiveToast: document.getElementById("islandLiveToast"),
     islandLiveIcon: document.getElementById("islandLiveIcon"),
     islandLiveText: document.getElementById("islandLiveText"),
+    islandLiveActionBtn: document.getElementById("islandLiveActionBtn"),
     islandExpanded: document.getElementById("islandExpanded"),
     islandTypeBadge: document.getElementById("islandTypeBadge"),
     nowEventTitle: document.getElementById("nowEventTitle"),
@@ -215,39 +216,66 @@
 
   function showToast(msg, icon = "✨", options = {}) {
     const { durationMs = 2800, action = null } = options;
-    el.toast.innerHTML = "";
-    const msgSpan = document.createElement("span");
-    msgSpan.className = "toast-msg";
-    msgSpan.textContent = msg;
-    el.toast.appendChild(msgSpan);
+    const hasIsland = Boolean(el.islandLiveToast && el.nowBanner);
+    const isMobileViewport = window.matchMedia("(max-width: 1024px)").matches;
+    const hasAction = Boolean(action && typeof action.onClick === "function");
 
-    if (action && typeof action.onClick === "function") {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "toast-action-btn";
-      btn.textContent = action.label || "되돌리기";
-      btn.addEventListener("click", async () => {
-        clearTimeout(toastTimer);
-        el.toast.classList.add("hidden");
-        await action.onClick();
-      });
-      el.toast.appendChild(btn);
+    if (!isMobileViewport || !hasIsland) {
+      el.toast.innerHTML = "";
+      const msgSpan = document.createElement("span");
+      msgSpan.className = "toast-msg";
+      msgSpan.textContent = msg;
+      el.toast.appendChild(msgSpan);
+
+      if (hasAction) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "toast-action-btn";
+        btn.textContent = action.label || "되돌리기";
+        btn.addEventListener("click", async () => {
+          clearTimeout(toastTimer);
+          el.toast.classList.add("hidden");
+          await action.onClick();
+        });
+        el.toast.appendChild(btn);
+      }
+
+      el.toast.classList.remove("hidden");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.toast.classList.add("hidden"), durationMs);
+    } else {
+      clearTimeout(toastTimer);
+      el.toast.classList.add("hidden");
     }
 
-    el.toast.classList.remove("hidden");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.toast.classList.add("hidden"), durationMs);
-
-    if (el.islandLiveToast && el.nowBanner) {
+    if (hasIsland) {
       el.islandLiveIcon.textContent = icon;
       el.islandLiveText.textContent = msg;
+      if (el.islandLiveActionBtn) {
+        if (hasAction) {
+          el.islandLiveActionBtn.textContent = action.label || "되돌리기";
+          el.islandLiveActionBtn.classList.remove("hidden");
+          el.islandLiveActionBtn.onclick = async (e) => {
+            e.stopPropagation();
+            clearTimeout(islandNotifyTimer);
+            clearTimeout(toastTimer);
+            el.nowBanner.classList.remove("is-notify");
+            el.islandLiveToast.classList.add("hidden");
+            el.toast.classList.add("hidden");
+            await action.onClick();
+          };
+        } else {
+          el.islandLiveActionBtn.classList.add("hidden");
+          el.islandLiveActionBtn.onclick = null;
+        }
+      }
       el.islandLiveToast.classList.remove("hidden");
       el.nowBanner.classList.add("is-notify");
       clearTimeout(islandNotifyTimer);
       islandNotifyTimer = setTimeout(() => {
         el.nowBanner.classList.remove("is-notify");
         el.islandLiveToast.classList.add("hidden");
-      }, Math.min(durationMs, 3200));
+      }, hasAction ? durationMs : Math.min(durationMs, 3200));
     }
   }
 
@@ -1744,6 +1772,53 @@
     el.eventsLayer.appendChild(marker);
   }
 
+  function syncDockDragState(sourceEl, ghostRef, ev, clientX, clientY) {
+    const timelineRect = el.timelineScroll?.getBoundingClientRect();
+    const dockRect = el.stagingDock?.getBoundingClientRect();
+    const isOverDock = Boolean(
+      dockRect &&
+        dockRect.width > 0 &&
+        dockRect.height > 0 &&
+        clientX >= dockRect.left &&
+        clientX <= dockRect.right &&
+        clientY >= dockRect.top &&
+        clientY <= dockRect.bottom
+    );
+    const isLeavingTimeline = Boolean(
+      isOverDock || (timelineRect && dockRect && dockRect.width > 0 && clientX < timelineRect.left)
+    );
+
+    el.stagingDock?.classList.toggle("drop-active", isOverDock);
+    sourceEl?.classList.toggle("is-unscheduling", isLeavingTimeline);
+
+    if (isLeavingTimeline) {
+      if (!ghostRef.current) {
+        const ghost = document.createElement("div");
+        ghost.className = "dock-drag-ghost";
+        ghost.innerHTML = `<span class="dock-ghost-icon">📥</span><span class="dock-ghost-title">${escapeHtml(ev.title)}</span><span class="dock-ghost-sub">시간 미정으로</span>`;
+        document.body.appendChild(ghost);
+        ghostRef.current = ghost;
+      }
+      ghostRef.current.style.left = `${clientX}px`;
+      ghostRef.current.style.top = `${clientY}px`;
+      ghostRef.current.classList.toggle("is-over-dock", isOverDock);
+    } else if (ghostRef.current) {
+      ghostRef.current.remove();
+      ghostRef.current = null;
+    }
+
+    return { isOverDock, isLeavingTimeline };
+  }
+
+  function clearDockDragState(sourceEl, ghostRef) {
+    if (ghostRef?.current) {
+      ghostRef.current.remove();
+      ghostRef.current = null;
+    }
+    sourceEl?.classList.remove("is-unscheduling");
+    el.stagingDock?.classList.remove("drop-active");
+  }
+
   function bindReminderMarkerInteractions(marker, pill, ev) {
     const timeLabel = pill.querySelector(".reminder-marker-time");
     pill.addEventListener("pointerdown", (e) => {
@@ -1759,10 +1834,11 @@
       let previewStart = origStart;
       let dragged = false;
       let droppingToDock = false;
+      const dockGhostRef = { current: null };
 
       const cleanup = () => {
         marker.classList.remove("is-dragging");
-        el.stagingDock?.classList.remove("drop-highlight");
+        clearDockDragState(marker, dockGhostRef);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onCancel);
@@ -1778,15 +1854,21 @@
         if (!dragged) return;
         mv.preventDefault();
 
-        const dockRect = el.stagingDock?.getBoundingClientRect();
-        droppingToDock = Boolean(
-          dockRect &&
-            mv.clientX >= dockRect.left &&
-            mv.clientX <= dockRect.right &&
-            mv.clientY >= dockRect.top &&
-            mv.clientY <= dockRect.bottom
+        const { isOverDock, isLeavingTimeline } = syncDockDragState(
+          marker,
+          dockGhostRef,
+          ev,
+          mv.clientX,
+          mv.clientY
         );
-        el.stagingDock?.classList.toggle("drop-highlight", droppingToDock);
+        droppingToDock = isOverDock;
+
+        if (isLeavingTimeline) {
+          previewStart = origStart;
+          marker.style.top = `${origTop}px`;
+          if (timeLabel) timeLabel.textContent = `🔔 ${minToTimeStr(origStart)}`;
+          return;
+        }
 
         const nextY = origTop + dy;
         previewStart = clamp(snap(yToMin(nextY)), minBound, 1439);
@@ -1962,6 +2044,7 @@
       let previewVisualEnd = ev.visualEndMin;
       let previewHasEnd = origHasEnd;
       let droppingToDock = false;
+      const dockGhostRef = { current: null };
 
       activePointerDrag = true;
       selectedEventId = ev.id;
@@ -1988,25 +2071,31 @@
         const minBound = getTimelineMinBound();
 
         if (mode === "move") {
-          const origD = toDisplayMin(origStart);
-          const nextD = clamp(origD + deltaMin, 0, 1440 - origVisualDur);
-          const rawStart = fromDisplayMin(nextD);
-          if (rawStart >= earlyEndMin && rawStart + origVisualDur > 1440) {
-            previewStart = 1440 - origVisualDur;
-          } else if (rawStart < earlyEndMin && rawStart + origVisualDur > earlyEndMin) {
-            previewStart = earlyEndMin - origVisualDur;
-          } else {
-            previewStart = rawStart;
-          }
-          previewVisualEnd = previewStart + origVisualDur;
+          const { isOverDock, isLeavingTimeline } = syncDockDragState(
+            block,
+            dockGhostRef,
+            ev,
+            moveEvent.clientX,
+            moveEvent.clientY
+          );
+          droppingToDock = isOverDock;
 
-          const dockRect = el.stagingDock.getBoundingClientRect();
-          droppingToDock =
-            moveEvent.clientX >= dockRect.left &&
-            moveEvent.clientX <= dockRect.right &&
-            moveEvent.clientY >= dockRect.top &&
-            moveEvent.clientY <= dockRect.bottom;
-          el.stagingDock.classList.toggle("drop-active", droppingToDock);
+          if (isLeavingTimeline) {
+            previewStart = origStart;
+            previewVisualEnd = ev.visualEndMin;
+          } else {
+            const origD = toDisplayMin(origStart);
+            const nextD = clamp(origD + deltaMin, 0, 1440 - origVisualDur);
+            const rawStart = fromDisplayMin(nextD);
+            if (rawStart >= earlyEndMin && rawStart + origVisualDur > 1440) {
+              previewStart = 1440 - origVisualDur;
+            } else if (rawStart < earlyEndMin && rawStart + origVisualDur > earlyEndMin) {
+              previewStart = earlyEndMin - origVisualDur;
+            } else {
+              previewStart = rawStart;
+            }
+            previewVisualEnd = previewStart + origVisualDur;
+          }
         } else if (mode === "resize-bottom") {
           const baseEnd = origHasEnd ? ev.endMin : origStart + 15;
           const maxEnd = origStart < earlyEndMin ? earlyEndMin : 1440;
@@ -2038,7 +2127,7 @@
         activePointerDrag = false;
         cleanupListeners();
         block.classList.remove("is-dragging");
-        el.stagingDock.classList.remove("drop-active");
+        clearDockDragState(block, dockGhostRef);
         if (hasMoved) renderEvents();
       };
 
@@ -2046,7 +2135,7 @@
         activePointerDrag = false;
         cleanupListeners();
         block.classList.remove("is-dragging");
-        el.stagingDock.classList.remove("drop-active");
+        clearDockDragState(block, dockGhostRef);
 
         if (!hasMoved) {
           if (isTouch && mode === "move") {
