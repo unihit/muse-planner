@@ -39,6 +39,7 @@
   let lastSyncCheckAt = 0;
   let lastUserMutationAt = 0;
   let loadRequestToken = 0;
+  let backlogLoadToken = 0;
   let undoStack = [];
   let realtimeClient = null;
   let realtimeChannel = null;
@@ -837,21 +838,24 @@
   }
 
   async function loadBacklogQuietly() {
+    const token = ++backlogLoadToken;
+    const mutAtStart = lastUserMutationAt;
     const settings = PlannerAPI.getSettings();
     if (
       backlogItems.length === 0 &&
       (settings.mode === "agent" || settings.mode === "supabase")
     ) {
       const cachedBacklog = PlannerAPI.getCachedBacklog();
-      if (cachedBacklog) {
+      if (cachedBacklog && mutAtStart === lastUserMutationAt) {
         backlogItems = cachedBacklog;
-        renderLists();
+        renderLeftPanel();
       }
     }
     try {
       const fresh = await PlannerAPI.fetchBacklog();
+      if (token !== backlogLoadToken || mutAtStart !== lastUserMutationAt) return;
       backlogItems = fresh;
-      renderLists();
+      renderLeftPanel();
     } catch {
       // 백로그 조회 실패 시 기존 캐시 유지
     }
@@ -899,8 +903,9 @@
         schedules = PlannerAPI.sortSchedules([...schedules.filter((s) => s.id !== item.id), optimistic]);
       }
     }
-    syncSwrCacheIfCurrent(currentDate, schedules);
     renderAll();
+    syncSwrCacheIfCurrent(currentDate, schedules);
+    syncSwrCacheIfCurrent(null, backlogItems);
 
     try {
       const updated = await PlannerAPI.patchSchedule(item.id, patchPayload, prevDate);
@@ -916,13 +921,15 @@
             updated
           ]);
         }
-        syncSwrCacheIfCurrent(currentDate, schedules);
         renderAll();
+        syncSwrCacheIfCurrent(currentDate, schedules);
+        syncSwrCacheIfCurrent(null, backlogItems);
       }
 
       pushUndoAction(
         nextIsBacklog ? `'${item.title}' 백로그 보관` : `'${item.title}' 오늘로 이동`,
         async () => {
+          lastUserMutationAt = Date.now();
           const reverted = await PlannerAPI.patchSchedule(item.id, prevSnap, toDate);
           if (reverted) {
             backlogItems = backlogItems.filter((b) => b.id !== reverted.id);
@@ -932,8 +939,9 @@
             } else if (reverted.date === currentDate) {
               schedules = PlannerAPI.sortSchedules([...schedules, reverted]);
             }
-            syncSwrCacheIfCurrent(currentDate, schedules);
             renderAll();
+            syncSwrCacheIfCurrent(currentDate, schedules);
+            syncSwrCacheIfCurrent(null, backlogItems);
           }
         }
       );
@@ -949,8 +957,9 @@
     } catch (err) {
       schedules = prevSchedules;
       backlogItems = prevBacklog;
-      syncSwrCacheIfCurrent(currentDate, schedules);
       renderAll();
+      syncSwrCacheIfCurrent(currentDate, schedules);
+      syncSwrCacheIfCurrent(null, backlogItems);
       showToast(`이동 실패: ${err.message}`, "⚠️");
     }
   }
@@ -1356,7 +1365,7 @@
     const removedDay = schedules.find((s) => s.id === id);
     const removedBacklog = !removedDay ? backlogItems.find((b) => b.id === id) : null;
     const removed = removedDay || removedBacklog;
-    const isBacklog = Boolean(removedBacklog) || targetDate === null;
+    const isBacklog = Boolean(removedBacklog) || targetDate === null || (removed && removed.date === null);
     const effectiveDate = targetDate !== undefined ? targetDate : isBacklog ? null : currentDate;
 
     const prevSchedules = [...schedules];
@@ -1364,13 +1373,16 @@
     lastUserMutationAt = Date.now();
     if (isBacklog) {
       backlogItems = backlogItems.filter((b) => b.id !== id);
-      syncSwrCacheIfCurrent(null, backlogItems);
     } else {
       schedules = schedules.filter((s) => s.id !== id);
-      syncSwrCacheIfCurrent(currentDate, schedules);
     }
     if (selectedEventId === id) selectedEventId = null;
     renderAll();
+    if (isBacklog) {
+      syncSwrCacheIfCurrent(null, backlogItems);
+    } else {
+      syncSwrCacheIfCurrent(currentDate, schedules);
+    }
 
     try {
       await PlannerAPI.deleteSchedule(id, effectiveDate);
@@ -1391,12 +1403,12 @@
             : recreated;
           if (finalRec.date === null) {
             backlogItems = PlannerAPI.sortSchedules([...backlogItems, finalRec]);
-            syncSwrCacheIfCurrent(null, backlogItems);
             renderAll();
+            syncSwrCacheIfCurrent(null, backlogItems);
           } else if (finalRec.date === currentDate) {
             schedules = PlannerAPI.sortSchedules([...schedules, finalRec]);
-            syncSwrCacheIfCurrent(currentDate, schedules);
             renderAll();
+            syncSwrCacheIfCurrent(currentDate, schedules);
           } else {
             await loadDay(finalRec.date, false);
           }
@@ -1424,9 +1436,9 @@
     } catch (err) {
       schedules = prevSchedules;
       backlogItems = prevBacklog;
+      renderAll();
       syncSwrCacheIfCurrent(currentDate, schedules);
       syncSwrCacheIfCurrent(null, backlogItems);
-      renderAll();
       showToast(`삭제 실패: ${err.message}`, "⚠️");
     }
   }
@@ -1788,11 +1800,17 @@
             moveItemBetweenDayAndBacklog(item, null);
           });
 
-          card.querySelector(".del-btn").addEventListener("click", () => {
+          card.querySelector(".del-btn").addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.currentTarget.disabled = true;
             deleteScheduleById(item.id);
           });
 
           card.addEventListener("dragstart", (e) => {
+            if (e.target.closest("button, input")) {
+              e.preventDefault();
+              return;
+            }
             activeHtmlDragPayload = {
               kind: "untimed",
               id: item.id,
@@ -1897,6 +1915,10 @@
               });
 
               card.addEventListener("dragstart", (e) => {
+                if (e.target.closest("button, input")) {
+                  e.preventDefault();
+                  return;
+                }
                 const dur =
                   item.type === "reminder"
                     ? 0
@@ -1981,11 +2003,17 @@
                 moveItemBetweenDayAndBacklog(item, currentDate);
               });
 
-              card.querySelector(".del-btn").addEventListener("click", () => {
+              card.querySelector(".del-btn").addEventListener("click", (e) => {
+                e.stopPropagation();
+                e.currentTarget.disabled = true;
                 deleteScheduleById(item.id, { targetDate: null });
               });
 
               card.addEventListener("dragstart", (e) => {
+                if (e.target.closest("button, input")) {
+                  e.preventDefault();
+                  return;
+                }
                 activeHtmlDragPayload = {
                   kind: "backlog",
                   id: item.id,
@@ -4125,8 +4153,10 @@
 
     el.addBacklogForm?.addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (el.addBacklogForm.dataset.submitting === "1") return;
       const title = el.newBacklogTitle?.value?.trim() || "";
       if (!title) return;
+      el.addBacklogForm.dataset.submitting = "1";
       el.newBacklogTitle.value = "";
       try {
         await createScheduleAndRecord(
@@ -4142,7 +4172,12 @@
           `'${title}'을(를) 나중에 할 일에 보관했습니다.`
         );
       } catch (err) {
+        if (el.newBacklogTitle && !el.newBacklogTitle.value) {
+          el.newBacklogTitle.value = title;
+        }
         showToast(`백로그 등록 실패: ${err.message}`, "⚠️");
+      } finally {
+        delete el.addBacklogForm.dataset.submitting;
       }
     });
 
@@ -4427,12 +4462,12 @@
       backlogItems = backlogItems.filter((b) => b.id !== record.id);
       if (record.date === null) {
         backlogItems = PlannerAPI.sortSchedules([...backlogItems, record]);
-        syncSwrCacheIfCurrent(null, backlogItems);
       } else if (record.date === currentDate) {
         schedules = PlannerAPI.sortSchedules([...schedules, record]);
       }
-      syncSwrCacheIfCurrent(currentDate, schedules);
       renderAll();
+      syncSwrCacheIfCurrent(currentDate, schedules);
+      syncSwrCacheIfCurrent(null, backlogItems);
     }
 
     el.eventForm.addEventListener("submit", async (e) => {
@@ -4491,6 +4526,10 @@
           if (updated && (updated.date === null || updated.date === currentDate)) {
             applyPatchedRecordToState(updated);
           } else if (dateVal) {
+            schedules = schedules.filter((s) => s.id !== id);
+            backlogItems = backlogItems.filter((b) => b.id !== id);
+            syncSwrCacheIfCurrent(currentDate, schedules);
+            syncSwrCacheIfCurrent(null, backlogItems);
             await loadDay(dateVal, false);
           }
           if (prevEv) {
@@ -4504,10 +4543,15 @@
               memo: prevEv.memo || ""
             };
             pushUndoAction(`'${prevEv.title}' 수정`, async () => {
+              lastUserMutationAt = Date.now();
               const reverted = await PlannerAPI.patchSchedule(id, snapPatch, payload.date);
               if (reverted && (reverted.date === null || reverted.date === currentDate)) {
                 applyPatchedRecordToState(reverted);
               } else if (snapPatch.date) {
+                schedules = schedules.filter((s) => s.id !== id);
+                backlogItems = backlogItems.filter((b) => b.id !== id);
+                syncSwrCacheIfCurrent(currentDate, schedules);
+                syncSwrCacheIfCurrent(null, backlogItems);
                 await loadDay(snapPatch.date, false);
               }
             });
@@ -4519,7 +4563,7 @@
               ...payload,
               source: "app"
             },
-            "새 일정을 등록했습니다."
+            isBacklog ? `'${titleVal}'을(를) 나중에 할 일에 등록했습니다.` : "새 일정을 등록했습니다."
           );
         }
       } catch (err) {
@@ -4530,8 +4574,9 @@
     el.deleteEventModalBtn.addEventListener("click", async () => {
       const id = el.editEventId.value;
       if (!id) return;
+      const target = findItemById(id);
       el.eventModal.classList.add("hidden");
-      await deleteScheduleById(id);
+      await deleteScheduleById(id, { targetDate: target ? target.date ?? null : undefined });
     });
 
     // 빠른 블록 프리셋 편집 & 통합 설정 모달 열기
