@@ -172,6 +172,7 @@
     settingsWidgetChecks: document.getElementById("settingsWidgetChecks"),
     resetPresetsBtn: document.getElementById("resetPresetsBtn"),
     resetAllPrefsBtn: document.getElementById("resetAllPrefsBtn"),
+    saveSettingsBtn: document.getElementById("saveSettingsBtn"),
     authGate: document.getElementById("authGate"),
     authGateForm: document.getElementById("authGateForm"),
     authGateEmail: document.getElementById("authGateEmail"),
@@ -2655,6 +2656,33 @@
       renderPresetManager();
       renderPresets();
       showToast("빠른 블록 프리셋을 기본값으로 복원했습니다.", "⚡");
+    });
+
+    el.saveSettingsBtn?.addEventListener("click", () => {
+      if (el.snapSelect) prefs.snapMin = Number(el.snapSelect.value) || 15;
+      if (el.defaultDurationSelect) prefs.defaultDurationMin = Number(el.defaultDurationSelect.value) || 30;
+      if (el.earlyStartHourSelect) {
+        prefs.earlyStartHour = clamp(Number(el.earlyStartHourSelect.value), 0, 11);
+      }
+      if (el.earlyEndHourSelect) {
+        prefs.earlyEndHour = clamp(Number(el.earlyEndHourSelect.value), 1, 12);
+      }
+      if ((Number(prefs.earlyEndHour) || 7) <= (Number(prefs.earlyStartHour) || 0)) {
+        prefs.earlyEndHour = Math.min(12, (Number(prefs.earlyStartHour) || 0) + 1);
+      }
+      if (el.earlyCollapsedCheck) prefs.earlyCollapsed = el.earlyCollapsedCheck.checked;
+      if (el.cascadeCheck) prefs.cascadeMode = el.cascadeCheck.checked;
+      if (el.themeSelect) prefs.theme = el.themeSelect.value === "light" ? "light" : "dark";
+      if (el.dimCompletedCheck) prefs.dimCompleted = el.dimCompletedCheck.checked;
+      if (el.browserNotifyCheck) prefs.browserNotify = el.browserNotifyCheck.checked;
+      el.settingsWidgetChecks?.querySelectorAll("input[data-widget]").forEach((cb) => {
+        if (!prefs.widgets) prefs.widgets = {};
+        prefs.widgets[cb.dataset.widget] = cb.checked;
+      });
+      PlannerAPI.savePrefs(prefs);
+      renderAll();
+      el.apiModal.classList.add("hidden");
+      showToast("설정이 저장되었습니다.", "✅");
     });
 
     el.resetAllPrefsBtn?.addEventListener("click", () => {
