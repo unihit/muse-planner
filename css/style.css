@@ -1283,6 +1283,12 @@ html[data-theme="light"] .reminder-pill-time {
   font-size: 12px;
   font-weight: 600;
   word-break: break-word;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.dock-card-title:hover {
+  color: var(--accent-hover);
 }
 
 .dock-card-meta {

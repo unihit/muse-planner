@@ -1395,12 +1395,13 @@
           card.innerHTML = `
             <div class="dock-card-top">
               <input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />
-              <div class="dock-card-title">${escapeHtml(item.title)}</div>
+              <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
             </div>
             <div class="dock-card-meta">
               <span>${TYPE_META[item.type]?.label || "일정"}</span>
               <div class="dock-card-actions">
                 <button type="button" class="mini-btn place-btn" title="빈 시간에 배치">+ 배치</button>
+                <button type="button" class="mini-btn edit-btn" title="편집">✏️</button>
                 <button type="button" class="mini-btn del del-btn" title="삭제">✕</button>
               </div>
             </div>
@@ -1410,10 +1411,18 @@
             toggleScheduleDone(item.id, e.target.checked);
           });
 
+          card.querySelector(".dock-card-title").addEventListener("click", () => {
+            openEventModal(item.id);
+          });
+
           card.querySelector(".place-btn").addEventListener("click", async () => {
             const startMin = findNextAvailableSlot(30);
             const endMin = item.type === "reminder" ? null : Math.min(1440, startMin + 30);
             await commitScheduleTimeChange(item, startMin, endMin);
+          });
+
+          card.querySelector(".edit-btn").addEventListener("click", () => {
+            openEventModal(item.id);
           });
 
           card.querySelector(".del-btn").addEventListener("click", () => {
