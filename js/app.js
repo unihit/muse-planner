@@ -430,7 +430,9 @@
 
   function applyPrefsToUI() {
     document.documentElement.setAttribute("data-theme", prefs.theme);
-    el.themeToggleBtn.textContent = prefs.theme === "dark" ? "☀️ 라이트" : "🌙 다크";
+    const themeLabel = prefs.theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환";
+    el.themeToggleBtn.setAttribute("title", themeLabel);
+    el.themeToggleBtn.setAttribute("aria-label", themeLabel);
     el.snapSelect.value = String(prefs.snapMin);
     el.zoomRange.value = String(prefs.pxPerMin);
     el.cascadeToggleBtn.classList.toggle("active", prefs.cascadeMode);
@@ -543,7 +545,7 @@
         <div class="dock-card-meta">
           <span>${CAT_META[item.category]?.label || "기타"} · ${item.durationMin}분</span>
           <div class="dock-card-actions">
-            <button type="button" class="mini-btn place-btn" title="빈 시간에 바로 배치">📅 배치</button>
+            <button type="button" class="mini-btn place-btn" title="빈 시간에 바로 배치">+ 배치</button>
             <button type="button" class="mini-btn del del-btn" title="삭제">✕</button>
           </div>
         </div>
@@ -707,9 +709,15 @@
             <button type="button" class="q-btn" data-act="minus15" title="15분 줄이기">-15m</button>
             <button type="button" class="q-btn" data-act="plus15" title="15분 늘리기">+15m</button>
             <button type="button" class="q-btn" data-act="plus30" title="30분 늘리기">+30m</button>
-            <button type="button" class="q-btn ${ev.pinned ? "active" : ""}" data-act="pin" title="고정 토글">🔒</button>
-            <button type="button" class="q-btn" data-act="defer" title="보류함으로 빼기">📥</button>
-            <button type="button" class="q-btn" data-act="edit" title="세부 편집">✏️</button>
+            <button type="button" class="q-btn q-icon ${ev.pinned ? "active" : ""}" data-act="pin" title="고정 토글" aria-label="고정 토글">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            </button>
+            <button type="button" class="q-btn q-icon" data-act="defer" title="보류함으로 빼기" aria-label="보류함으로 빼기">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>
+            </button>
+            <button type="button" class="q-btn q-icon" data-act="edit" title="세부 편집" aria-label="세부 편집">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+            </button>
           </div>
         </div>
         <div class="resize-handle bottom" title="아래로 끌어 종료 시간 조절"></div>
