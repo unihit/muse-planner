@@ -1410,6 +1410,7 @@
     setCachedSchedules,
     clearCachedSchedules,
     getCachedBacklog,
+    setCachedBacklog,
     fetchRealtimeConfig,
     fetchSchedules,
     fetchSchedulesRange,
