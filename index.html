@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Muse Elastic Planner — 일간 타임라인 플래너</title>
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-  <link rel="stylesheet" href="./css/style.css?v=20261114-15" />
+  <link rel="stylesheet" href="./css/style.css?v=20261114-16" />
 </head>
 <body>
   <!-- 로그인 화면 (가계부와 동일 Supabase Auth) -->
@@ -248,16 +248,6 @@
           <button id="editPresetsBtn" class="preset-add-btn" title="커스텀 블록 프리셋 추가/편집">+ 커스텀</button>
         </div>
 
-        <!-- 모바일 전용: 시간 미정 할 일 빠른 배치 트레이 -->
-        <div id="mobileUntimedTray" class="mobile-untimed-tray is-collapsed">
-          <button type="button" id="mobileUntimedTrayToggle" class="mobile-tray-header" aria-expanded="false">
-            <span class="mobile-tray-title">📥 시간 미정 <span id="mobileTrayCount" class="badge">0</span></span>
-            <span class="mobile-tray-hint">길게 눌러 타임라인으로 끌어다 놓기</span>
-            <span class="collapse-chevron" aria-hidden="true">▾</span>
-          </button>
-          <div id="mobileTrayChips" class="mobile-tray-chips"></div>
-        </div>
-
         <!-- 스크롤 가능한 타임 캔버스 -->
         <div id="timelineScroll" class="timeline-scroll">
           <div id="timelineGrid" class="timeline-grid">
@@ -384,6 +374,13 @@
       </div>
       <form id="eventForm" class="modal-body">
         <input type="hidden" id="editEventId" />
+        <div id="modalUntimedPicker" class="modal-untimed-picker hidden">
+          <div class="modal-untimed-head">
+            <span>📥 시간 미정 할 일 바로 넣기</span>
+            <span class="modal-untimed-sub">선택하면 이 시간에 배치됩니다</span>
+          </div>
+          <div id="modalUntimedChips" class="modal-untimed-chips"></div>
+        </div>
         <label class="field">
           <span>제목</span>
           <input id="editTitle" type="text" required placeholder="무엇을 하나요?" />
@@ -492,15 +489,32 @@
           <div class="settings-row">
             <div class="settings-row-info">
               <strong>새벽 접기 기준 시각</strong>
-              <span>새벽 구간 접기 시 00:00부터 숨길 종료 시각</span>
+              <span>새벽 구간 접기 시 숨길 시작 시각과 종료 시각</span>
             </div>
-            <div class="settings-control">
-              <select id="earlyEndHourSelect">
+            <div class="settings-control settings-time-range">
+              <select id="earlyStartHourSelect" aria-label="새벽 접기 시작 시각">
+                <option value="0" selected>00:00부터</option>
+                <option value="1">01:00부터</option>
+                <option value="2">02:00부터</option>
+                <option value="3">03:00부터</option>
+                <option value="4">04:00부터</option>
+                <option value="5">05:00부터</option>
+                <option value="6">06:00부터</option>
+                <option value="7">07:00부터</option>
+                <option value="8">08:00부터</option>
+              </select>
+              <span class="settings-range-sep">~</span>
+              <select id="earlyEndHourSelect" aria-label="새벽 접기 종료 시각">
+                <option value="3">03:00까지</option>
+                <option value="4">04:00까지</option>
                 <option value="5">05:00까지</option>
                 <option value="6">06:00까지</option>
-                <option value="7" selected>07:00까지 (기본)</option>
+                <option value="7" selected>07:00까지</option>
                 <option value="8">08:00까지</option>
                 <option value="9">09:00까지</option>
+                <option value="10">10:00까지</option>
+                <option value="11">11:00까지</option>
+                <option value="12">12:00까지</option>
               </select>
             </div>
           </div>

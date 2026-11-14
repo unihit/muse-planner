@@ -987,39 +987,8 @@ html[data-theme="light"] .action-btn {
 /* 데스크톱에서는 모바일 전용 요소 숨김 */
 .mobile-date-slot,
 .mobile-tab-bar,
-.mobile-add-fab,
-.mobile-untimed-tray {
+.mobile-add-fab {
   display: none;
-}
-
-/* 터치 드래그 중 손가락을 따라다니는 플로팅 고스트 칩 */
-.touch-drag-ghost {
-  position: fixed;
-  z-index: 900;
-  transform: translate(-50%, -100%);
-  pointer-events: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 210px;
-  padding: 7px 12px;
-  border-radius: 999px;
-  background: var(--bg-panel, #1b1f2a);
-  color: var(--text-primary);
-  border: 1.5px solid var(--accent-indigo);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
-  font-size: 12.5px;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  opacity: 0.96;
-}
-.touch-drag-ghost.type-task {
-  border-color: var(--accent-teal);
-}
-.touch-drag-ghost.type-reminder {
-  border-color: var(--accent-amber);
 }
 
 .dock-section {
@@ -1699,6 +1668,77 @@ html[data-theme="light"] .badge-reminder {
   background: var(--now);
   border-color: var(--now);
   color: #fff;
+}
+
+/* 새 일정 모달 상단: 시간 미정 할 일 바로 넣기 */
+.modal-untimed-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+}
+
+.modal-untimed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.modal-untimed-sub {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.modal-untimed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 110px;
+  overflow-y: auto;
+}
+
+.modal-untimed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.modal-untimed-chip .chip-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 190px;
+}
+
+.modal-untimed-chip:hover {
+  background: var(--surface-3);
+  border-color: var(--accent);
+}
+
+.modal-untimed-chip.type-task {
+  border-color: rgba(20, 184, 166, 0.45);
+}
+
+.modal-untimed-chip.type-reminder {
+  border-color: rgba(245, 158, 11, 0.48);
 }
 
 .time-toggle-card {
@@ -3090,114 +3130,6 @@ html[data-theme="light"] .modal-backdrop {
   .mobile-date-slot .date-input {
     text-align: center;
     font-size: 13px;
-  }
-
-  /* 모바일 전용: 타임라인 상단 시간 미정 빠른 배치 트레이 */
-  .mobile-untimed-tray {
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-surface);
-    border-bottom: 1px solid var(--border-subtle);
-    padding: 5px 10px;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-  .mobile-untimed-tray.is-empty {
-    display: none;
-  }
-  .mobile-tray-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    width: 100%;
-    border: none;
-    background: transparent;
-    color: var(--text-primary);
-    padding: 3px 2px;
-    cursor: pointer;
-    text-align: left;
-  }
-  .mobile-tray-title {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text-primary);
-    flex-shrink: 0;
-  }
-  .mobile-tray-hint {
-    flex: 1;
-    min-width: 0;
-    font-size: 10.5px;
-    color: var(--text-muted);
-    text-align: right;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .mobile-untimed-tray .collapse-chevron {
-    font-size: 12px;
-    color: var(--text-muted);
-    transition: transform 0.2s ease;
-  }
-  .mobile-untimed-tray.is-collapsed .collapse-chevron {
-    transform: rotate(-90deg);
-  }
-  .mobile-untimed-tray.is-collapsed .mobile-tray-chips {
-    display: none;
-  }
-  .mobile-tray-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    max-height: 108px;
-    overflow-y: auto;
-    padding-bottom: 4px;
-  }
-  .mobile-tray-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    max-width: 100%;
-    padding: 5px 10px;
-    border-radius: 999px;
-    border: 1px solid var(--border-subtle);
-    background: var(--bg-panel);
-    color: var(--text-primary);
-    font-size: 11.5px;
-    font-weight: 600;
-    line-height: 1.25;
-    cursor: grab;
-    touch-action: none;
-    user-select: none;
-    -webkit-user-select: none;
-    transition: transform 0.14s ease, opacity 0.14s ease, border-color 0.14s ease;
-  }
-  .mobile-tray-chip .chip-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 170px;
-  }
-  .mobile-tray-chip.type-schedule {
-    border-color: rgba(99, 102, 241, 0.42);
-  }
-  .mobile-tray-chip.type-task {
-    border-color: rgba(20, 184, 166, 0.45);
-  }
-  .mobile-tray-chip.type-reminder {
-    border-color: rgba(245, 158, 11, 0.48);
-  }
-  .mobile-tray-chip.is-dragging {
-    opacity: 0.35;
-    transform: scale(0.95);
-  }
-  .mobile-tray-empty {
-    font-size: 11px;
-    color: var(--text-muted);
-    padding: 2px 4px;
   }
   .now-banner,
   .now-banner.dynamic-island {

@@ -80,10 +80,8 @@
     mobileTabBar: document.getElementById("mobileTabBar"),
     mobileDockBadge: document.getElementById("mobileDockBadge"),
     mobileAddFab: document.getElementById("mobileAddFab"),
-    mobileUntimedTray: document.getElementById("mobileUntimedTray"),
-    mobileUntimedTrayToggle: document.getElementById("mobileUntimedTrayToggle"),
-    mobileTrayCount: document.getElementById("mobileTrayCount"),
-    mobileTrayChips: document.getElementById("mobileTrayChips"),
+    modalUntimedPicker: document.getElementById("modalUntimedPicker"),
+    modalUntimedChips: document.getElementById("modalUntimedChips"),
     addStagedForm: document.getElementById("addStagedForm"),
     newStagedTitle: document.getElementById("newStagedTitle"),
     newStagedType: document.getElementById("newStagedType"),
@@ -999,143 +997,6 @@
     });
   }
 
-  function attachTouchDragToTimeline(chip, item) {
-    let pointerId = null;
-    let startX = 0;
-    let startY = 0;
-    let isDragging = false;
-    let ghostEl = null;
-
-    const cleanup = () => {
-      if (ghostEl) {
-        ghostEl.remove();
-        ghostEl = null;
-      }
-      chip.classList.remove("is-dragging");
-      el.ghostPreview.classList.add("hidden");
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-    };
-
-    const getTimelineDropTarget = (clientX, clientY) => {
-      const rect = el.timelineScroll.getBoundingClientRect();
-      if (
-        clientX < rect.left ||
-        clientX > rect.right ||
-        clientY < rect.top ||
-        clientY > rect.bottom
-      ) {
-        return null;
-      }
-      const durMin = item.type === "reminder" ? 0 : 30;
-      const span = Math.max(15, durMin || getDefaultDurationMin());
-      const y = clientY - el.timelineGrid.getBoundingClientRect().top;
-      const minBound = prefs.earlyCollapsed ? getEarlyEndMin() : 0;
-      const dropStart = clamp(snap(yToMin(y)), minBound, 1440 - span);
-      const dropEnd = durMin > 0 ? Math.min(1440, dropStart + durMin) : null;
-      return { dropStart, dropEnd, visualEnd: dropStart + span, durMin };
-    };
-
-    const onMove = (mv) => {
-      if (mv.pointerId !== pointerId) return;
-      const dx = mv.clientX - startX;
-      const dy = mv.clientY - startY;
-      if (!isDragging && Math.hypot(dx, dy) >= 8) {
-        isDragging = true;
-        clearTouchDraftSlot();
-        chip.classList.add("is-dragging");
-        ghostEl = document.createElement("div");
-        ghostEl.className = `touch-drag-ghost type-${item.type}`;
-        ghostEl.textContent = `${TYPE_META[item.type]?.icon || "📌"} ${item.title}`;
-        document.body.appendChild(ghostEl);
-      }
-      if (!isDragging) return;
-      mv.preventDefault();
-
-      if (ghostEl) {
-        ghostEl.style.left = `${mv.clientX}px`;
-        ghostEl.style.top = `${mv.clientY - 24}px`;
-      }
-
-      const target = getTimelineDropTarget(mv.clientX, mv.clientY);
-      if (target) {
-        const top = minToY(target.dropStart);
-        const h = Math.max(24, minToY(target.visualEnd) - top);
-        el.ghostPreview.style.top = `${top}px`;
-        el.ghostPreview.style.height = `${h}px`;
-        el.ghostPreview.textContent =
-          target.durMin > 0
-            ? `📥 ${item.title} (${minToTimeStr(target.dropStart)} ~ ${minToTimeStr(target.dropEnd)})`
-            : `🔔 ${item.title} (${minToTimeStr(target.dropStart)})`;
-        el.ghostPreview.classList.remove("hidden");
-      } else {
-        el.ghostPreview.classList.add("hidden");
-      }
-    };
-
-    const onUp = async (up) => {
-      if (up.pointerId !== pointerId) return;
-      const wasDragging = isDragging;
-      const target = wasDragging ? getTimelineDropTarget(up.clientX, up.clientY) : null;
-      cleanup();
-
-      if (!wasDragging) {
-        openEventModal(item.id);
-        return;
-      }
-
-      if (target) {
-        await commitScheduleTimeChange(item, target.dropStart, target.dropEnd);
-        showToast(`${minToTimeStr(target.dropStart)}에 배치했습니다.`, "📥");
-      }
-    };
-
-    const onCancel = (ev) => {
-      if (ev.pointerId !== pointerId) return;
-      cleanup();
-    };
-
-    chip.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0 && e.pointerType === "mouse") return;
-      pointerId = e.pointerId;
-      startX = e.clientX;
-      startY = e.clientY;
-      isDragging = false;
-      window.addEventListener("pointermove", onMove, { passive: false });
-      window.addEventListener("pointerup", onUp);
-      window.addEventListener("pointercancel", onCancel);
-    });
-  }
-
-  function renderMobileUntimedTray(untimed) {
-    if (!el.mobileUntimedTray || !el.mobileTrayChips || !el.mobileTrayCount) return;
-    const pending = untimed.filter((s) => !s.done);
-    el.mobileTrayCount.textContent = String(pending.length);
-    el.mobileUntimedTray.classList.toggle("is-empty", pending.length === 0);
-
-    const trayKey = pending.map((s) => `${s.id}:${s.type}:${s.title}`).join("|");
-    if (el.mobileTrayChips.dataset.renderKey === trayKey) return;
-    el.mobileTrayChips.dataset.renderKey = trayKey;
-
-    el.mobileTrayChips.innerHTML = "";
-    if (!pending.length) {
-      el.mobileTrayChips.innerHTML = `<span class="mobile-tray-empty">배치할 시간 미정 할 일이 없습니다.</span>`;
-      return;
-    }
-
-    for (const item of pending) {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = `mobile-tray-chip type-${item.type}`;
-      chip.dataset.id = item.id;
-      const icon = TYPE_META[item.type]?.icon || "📌";
-      chip.innerHTML = `<span class="chip-icon">${icon}</span><span class="chip-title">${escapeHtml(item.title)}</span>`;
-      attachTouchDragToTimeline(chip, item);
-      el.mobileTrayChips.appendChild(chip);
-    }
-  }
-
   function renderLeftPanel() {
     const sortDoneBottom = (arr) => [
       ...arr.filter((s) => !s.done),
@@ -1153,7 +1014,6 @@
       el.mobileDockBadge.textContent = String(pendingDockCount);
       el.mobileDockBadge.classList.toggle("hidden", pendingDockCount === 0);
     }
-    renderMobileUntimedTray(untimed);
 
     const untimedKey = untimed.map((s) => `${s.id}:${s.done ? 1 : 0}:${s.type}:${s.title}`).join("|");
     if (el.untimedList.dataset.renderKey !== untimedKey) {
@@ -2262,6 +2122,44 @@
     }
   }
 
+  function renderModalUntimedPicker(defaultStartMin, defaultEndMin) {
+    if (!el.modalUntimedPicker || !el.modalUntimedChips) return;
+    const pending = schedules.filter((s) => !s.hasStartAt && !s.done);
+    if (!pending.length) {
+      el.modalUntimedPicker.classList.add("hidden");
+      el.modalUntimedChips.innerHTML = "";
+      return;
+    }
+
+    el.modalUntimedPicker.classList.remove("hidden");
+    el.modalUntimedChips.innerHTML = "";
+
+    for (const item of pending) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = `modal-untimed-chip type-${item.type}`;
+      const icon = TYPE_META[item.type]?.icon || "📌";
+      chip.innerHTML = `<span class="chip-icon">${icon}</span><span class="chip-title">${escapeHtml(item.title)}</span>`;
+      chip.addEventListener("click", async () => {
+        const pickedStart = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? defaultStartMin;
+        const pickedEndRaw = el.editHasEndCheck.checked
+          ? PlannerAPI.hhmmToMinutes(el.editEnd.value) ?? defaultEndMin
+          : null;
+        const finalEnd =
+          item.type === "reminder"
+            ? null
+            : pickedEndRaw !== null && pickedEndRaw > pickedStart
+              ? Math.min(1440, pickedEndRaw)
+              : Math.min(1440, pickedStart + getDefaultDurationMin());
+
+        el.eventModal.classList.add("hidden");
+        await commitScheduleTimeChange(item, pickedStart, finalEnd);
+        showToast(`${minToTimeStr(pickedStart)}에 "${item.title}" 배치됨`, "📥");
+      });
+      el.modalUntimedChips.appendChild(chip);
+    }
+  }
+
   function openNewEventModal(startMin = 600, endMin = 660) {
     el.eventModalTitle.textContent = "새 일정 추가";
     el.editEventId.value = "";
@@ -2276,6 +2174,7 @@
     el.editMemo.value = "";
     el.deleteEventModalBtn.classList.add("hidden");
     syncTimeFieldsVisibility();
+    renderModalUntimedPicker(startMin, endMin);
     el.eventModal.classList.remove("hidden");
     setTimeout(() => el.editTitle.focus(), 40);
   }
@@ -2283,6 +2182,7 @@
   function openEventModal(eventId) {
     const ev = schedules.find((e) => e.id === eventId);
     if (!ev) return;
+    if (el.modalUntimedPicker) el.modalUntimedPicker.classList.add("hidden");
     el.eventModalTitle.textContent = "일정 세부 편집";
     el.editEventId.value = ev.id;
     el.editTitle.value = ev.title;
@@ -2791,14 +2691,6 @@
           window.scrollTo({ top: 0, behavior: "smooth" });
           alignDynamicIsland();
         });
-      });
-    }
-
-    // 모바일 전용: 타임라인 상단 시간 미정 트레이 접기/펼치기
-    if (el.mobileUntimedTrayToggle && el.mobileUntimedTray) {
-      el.mobileUntimedTrayToggle.addEventListener("click", () => {
-        const collapsed = el.mobileUntimedTray.classList.toggle("is-collapsed");
-        el.mobileUntimedTrayToggle.setAttribute("aria-expanded", String(!collapsed));
       });
     }
 
