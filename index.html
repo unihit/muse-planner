@@ -624,6 +624,7 @@
           </p>
           <div id="routineManageList" class="routine-manage-list"></div>
           <form id="addRoutineForm" class="routine-add-form">
+            <input id="routineEditId" type="hidden" value="" />
             <div class="routine-form-row">
               <input id="routineTitle" type="text" placeholder="루틴 이름 (예: 취침 준비, 홈트)" required />
               <select id="routineType" aria-label="루틴 유형">
@@ -663,7 +664,10 @@
                 <label class="weekday-chip"><input type="checkbox" value="6" checked /><span>토</span></label>
                 <label class="weekday-chip"><input type="checkbox" value="0" checked /><span>일</span></label>
               </div>
-              <button type="submit" class="btn-primary btn-xs">+ 루틴 추가</button>
+              <div class="routine-form-actions">
+                <button type="button" id="routineCancelEditBtn" class="btn-secondary btn-xs hidden">취소</button>
+                <button type="submit" id="routineSubmitBtn" class="btn-primary btn-xs">+ 루틴 추가</button>
+              </div>
             </div>
           </form>
         </section>

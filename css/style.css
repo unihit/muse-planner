@@ -2918,6 +2918,24 @@ html[data-theme="light"] .modal-backdrop {
   opacity: 0.55;
 }
 
+.routine-manage-item.is-editing {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.routine-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.routine-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .routine-item-toggle input[type="checkbox"] {
   width: 15px;
   height: 15px;

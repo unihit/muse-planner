@@ -152,12 +152,15 @@
     applyRoutinesNowBtn: document.getElementById("applyRoutinesNowBtn"),
     routineManageList: document.getElementById("routineManageList"),
     addRoutineForm: document.getElementById("addRoutineForm"),
+    routineEditId: document.getElementById("routineEditId"),
     routineTitle: document.getElementById("routineTitle"),
     routineType: document.getElementById("routineType"),
     routineTime: document.getElementById("routineTime"),
     routineUntimedCheck: document.getElementById("routineUntimedCheck"),
     routineDuration: document.getElementById("routineDuration"),
     routineWeekdayBar: document.getElementById("routineWeekdayBar"),
+    routineSubmitBtn: document.getElementById("routineSubmitBtn"),
+    routineCancelEditBtn: document.getElementById("routineCancelEditBtn"),
     snapSelect: document.getElementById("snapSelect"),
     zoomRange: document.getElementById("zoomRange"),
     zoomValueLabel: document.getElementById("zoomValueLabel"),
@@ -2419,6 +2422,70 @@
     return sorted.map((d) => WEEKDAY_NAMES[d] || "").filter(Boolean).join("·");
   }
 
+  function resetRoutineForm() {
+    if (el.routineEditId) el.routineEditId.value = "";
+    if (el.routineTitle) el.routineTitle.value = "";
+    if (el.routineType) el.routineType.value = "schedule";
+    if (el.routineUntimedCheck) el.routineUntimedCheck.checked = false;
+    if (el.routineTime) {
+      el.routineTime.disabled = false;
+      el.routineTime.value = "23:00";
+    }
+    if (el.routineDuration) {
+      el.routineDuration.disabled = false;
+      el.routineDuration.value = "30";
+    }
+    el.routineWeekdayBar
+      ?.querySelectorAll('.routine-weekday-chips input[type="checkbox"]')
+      .forEach((cb) => {
+        cb.checked = true;
+      });
+    if (el.routineSubmitBtn) el.routineSubmitBtn.textContent = "+ 루틴 추가";
+    el.routineCancelEditBtn?.classList.add("hidden");
+    el.routineManageList
+      ?.querySelectorAll(".routine-manage-item.is-editing")
+      .forEach((node) => node.classList.remove("is-editing"));
+  }
+
+  function startRoutineEdit(rt) {
+    if (!rt) return;
+    if (el.routineEditId) el.routineEditId.value = rt.id;
+    if (el.routineTitle) el.routineTitle.value = rt.title || "";
+    if (el.routineType) el.routineType.value = rt.type || "schedule";
+
+    const untimed = !rt.start_time;
+    if (el.routineUntimedCheck) el.routineUntimedCheck.checked = untimed;
+    if (el.routineTime) {
+      el.routineTime.disabled = untimed;
+      el.routineTime.value = rt.start_time || "23:00";
+    }
+    if (el.routineDuration) {
+      el.routineDuration.disabled = untimed;
+      const durVal = String(rt.duration_min ?? 30);
+      if (![...el.routineDuration.options].some((opt) => opt.value === durVal)) {
+        const opt = document.createElement("option");
+        opt.value = durVal;
+        opt.textContent = `${durVal}분`;
+        el.routineDuration.appendChild(opt);
+      }
+      el.routineDuration.value = durVal;
+    }
+
+    const activeDays = Array.isArray(rt.weekdays) ? rt.weekdays.map(Number) : [0, 1, 2, 3, 4, 5, 6];
+    el.routineWeekdayBar
+      ?.querySelectorAll('.routine-weekday-chips input[type="checkbox"]')
+      .forEach((cb) => {
+        cb.checked = activeDays.includes(Number(cb.value));
+      });
+
+    if (el.routineSubmitBtn) el.routineSubmitBtn.textContent = "💾 루틴 저장";
+    el.routineCancelEditBtn?.classList.remove("hidden");
+    el.routineManageList?.querySelectorAll(".routine-manage-item").forEach((node) => {
+      node.classList.toggle("is-editing", node.dataset.id === rt.id);
+    });
+    el.routineTitle?.focus();
+  }
+
   async function loadAndRenderRoutines() {
     if (!el.routineManageList) return;
     const settings = PlannerAPI.getSettings();
@@ -2435,9 +2502,11 @@
         return;
       }
 
+      const editingId = el.routineEditId?.value || "";
       for (const rt of list) {
         const row = document.createElement("div");
-        row.className = `routine-manage-item ${rt.enabled ? "" : "is-disabled"}`;
+        row.className = `routine-manage-item ${rt.enabled ? "" : "is-disabled"} ${editingId === rt.id ? "is-editing" : ""}`;
+        row.dataset.id = rt.id;
         const timeStr = rt.start_time ? `${rt.start_time}` : "시간 미정";
         const durStr = rt.start_time && rt.duration_min > 0 ? ` · ${rt.duration_min}분` : rt.start_time ? " · 시작만" : "";
         const dayStr = formatWeekdaysLabel(rt.weekdays);
@@ -2454,7 +2523,10 @@
               <span>${escapeHtml(timeStr + durStr)} · ${escapeHtml(typeLabel)}</span>
             </div>
           </div>
-          <button type="button" class="mini-btn del" title="루틴 삭제">✕</button>
+          <div class="routine-item-actions">
+            <button type="button" class="mini-btn edit-routine-btn" title="루틴 편집">✏️</button>
+            <button type="button" class="mini-btn del" title="루틴 삭제">✕</button>
+          </div>
         `;
 
         row.querySelector(".routine-enable-cb").addEventListener("change", async (e) => {
@@ -2473,9 +2545,16 @@
           }
         });
 
+        row.querySelector(".edit-routine-btn").addEventListener("click", () => {
+          startRoutineEdit(rt);
+        });
+
         row.querySelector(".del").addEventListener("click", async () => {
           try {
             await PlannerAPI.deleteRoutineTemplate(rt.id);
+            if (el.routineEditId?.value === rt.id) {
+              resetRoutineForm();
+            }
             await loadAndRenderRoutines();
             showToast(`'${rt.title}' 루틴을 삭제했습니다.`);
           } catch (err) {
@@ -2608,6 +2687,10 @@
       });
     });
 
+    el.routineCancelEditBtn?.addEventListener("click", () => {
+      resetRoutineForm();
+    });
+
     el.addRoutineForm?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const title = el.routineTitle.value.trim();
@@ -2624,27 +2707,41 @@
       const untimed = Boolean(el.routineUntimedCheck?.checked);
       const startTime = untimed ? null : el.routineTime?.value || null;
       const durationMin = untimed ? 0 : Number(el.routineDuration?.value ?? 30);
+      const editId = el.routineEditId?.value?.trim() || "";
 
       try {
-        await PlannerAPI.createRoutineTemplate({
-          title,
-          type: el.routineType?.value || "schedule",
-          start_time: startTime,
-          duration_min: durationMin,
-          weekdays,
-          enabled: true
-        });
-        el.routineTitle.value = "";
-        await loadAndRenderRoutines();
-        const applied = await PlannerAPI.applyRoutinesForDate(currentDate);
-        if (applied > 0) {
-          await loadDay(currentDate, false);
-          showToast(`루틴 '${title}'을(를) 추가하고 현재 날짜에도 바로 반영했습니다.`, "🔁");
+        if (editId) {
+          await PlannerAPI.patchRoutineTemplate(editId, {
+            title,
+            type: el.routineType?.value || "schedule",
+            start_time: startTime,
+            duration_min: durationMin,
+            weekdays
+          });
+          resetRoutineForm();
+          await loadAndRenderRoutines();
+          showToast(`루틴 '${title}'을(를) 수정했습니다. (이후 날짜부터 반영)`, "✏️");
         } else {
-          showToast(`루틴 '${title}'을(를) 추가했습니다.`, "🔁");
+          await PlannerAPI.createRoutineTemplate({
+            title,
+            type: el.routineType?.value || "schedule",
+            start_time: startTime,
+            duration_min: durationMin,
+            weekdays,
+            enabled: true
+          });
+          resetRoutineForm();
+          await loadAndRenderRoutines();
+          const applied = await PlannerAPI.applyRoutinesForDate(currentDate);
+          if (applied > 0) {
+            await loadDay(currentDate, false);
+            showToast(`루틴 '${title}'을(를) 추가하고 현재 날짜에도 바로 반영했습니다.`, "🔁");
+          } else {
+            showToast(`루틴 '${title}'을(를) 추가했습니다.`, "🔁");
+          }
         }
       } catch (err) {
-        showToast(`루틴 추가 실패: ${err.message}`, "⚠️");
+        showToast(`루틴 저장 실패: ${err.message}`, "⚠️");
       }
     });
 

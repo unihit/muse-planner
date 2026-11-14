@@ -791,7 +791,198 @@ async function handle(req: Request): Promise<Response> {
     if (method === 'DELETE') return deleteSchedule(id)
   }
 
+  if (path === '/v1/routines') {
+    if (method === 'GET') return listRoutines()
+    if (method === 'POST') return createRoutine(req)
+  }
+
+  const routineMatch = path.match(/^\/v1\/routines\/([^/]+)$/)
+  if (routineMatch) {
+    const id = decodeURIComponent(routineMatch[1])
+    if (method === 'PATCH') return updateRoutine(req, id)
+    if (method === 'DELETE') return deleteRoutine(id)
+  }
+
   throw new ApiError(404, 'NOT_FOUND', '엔드포인트를 찾을 수 없습니다.')
+}
+
+const ROUTINE_SELECT =
+  'id, title, type, start_time, duration_min, weekdays, memo, enabled, created_at, updated_at'
+const TIME_HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+
+function parseWeekdaysField(raw: unknown, fields: Record<string, string>): number[] {
+  if (!Array.isArray(raw)) {
+    fields.weekdays = 'weekdays는 0(일)~6(토) 정수 배열이어야 합니다.'
+    return [0, 1, 2, 3, 4, 5, 6]
+  }
+  const clean = [...new Set(raw.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6))].sort(
+    (a, b) => a - b,
+  )
+  if (!clean.length) {
+    fields.weekdays = 'weekdays는 1개 이상의 요일(0~6)을 포함해야 합니다.'
+  }
+  return clean
+}
+
+async function listRoutines() {
+  const { data, error } = await db()
+    .from('routine_templates')
+    .select(ROUTINE_SELECT)
+    .order('start_time', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true })
+
+  if (error) throw dbError(error)
+  return jsonResponse(data ?? [], 200)
+}
+
+async function createRoutine(req: Request) {
+  const body = await readBody(req)
+  const fields: Record<string, string> = {}
+
+  const title = typeof body.title === 'string' ? body.title.trim() : ''
+  if (!title) fields.title = 'title은 비워둘 수 없습니다.'
+
+  const type = body.type === undefined ? 'schedule' : String(body.type)
+  if (!SCHEDULE_TYPES.includes(type as (typeof SCHEDULE_TYPES)[number])) {
+    fields.type = 'type은 schedule, task, reminder 중 하나여야 합니다.'
+  }
+
+  let startTime: string | null = null
+  if (body.start_time !== undefined && body.start_time !== null && body.start_time !== '') {
+    const t = String(body.start_time).trim()
+    if (!TIME_HHMM_RE.test(t)) {
+      fields.start_time = 'start_time은 HH:MM (24시간) 형식이어야 합니다.'
+    } else {
+      startTime = t
+    }
+  }
+
+  let durationMin = 30
+  if (body.duration_min !== undefined) {
+    const n = Number(body.duration_min)
+    if (!Number.isInteger(n) || n < 0 || n > 1440) {
+      fields.duration_min = 'duration_min은 0~1440 사이의 정수여야 합니다.'
+    } else {
+      durationMin = n
+    }
+  }
+
+  const weekdays =
+    body.weekdays === undefined ? [0, 1, 2, 3, 4, 5, 6] : parseWeekdaysField(body.weekdays, fields)
+
+  if (Object.keys(fields).length > 0) {
+    throw new ApiError(400, 'VALIDATION_ERROR', Object.values(fields)[0], fields)
+  }
+
+  const { data, error } = await db()
+    .from('routine_templates')
+    .insert({
+      title,
+      type,
+      start_time: startTime,
+      duration_min: durationMin,
+      weekdays,
+      memo: typeof body.memo === 'string' && body.memo.trim() ? body.memo : null,
+      enabled: body.enabled === undefined ? true : Boolean(body.enabled),
+    })
+    .select(ROUTINE_SELECT)
+    .single()
+
+  if (error) throw dbError(error)
+
+  if (body.apply_today !== false) {
+    try {
+      await db().rpc('apply_routines_for_date', { target_date: todayKst() })
+    } catch {
+      // ignore auto-apply failure
+    }
+  }
+
+  return jsonResponse(data, 201)
+}
+
+async function updateRoutine(req: Request, id: string) {
+  if (!UUID_RE.test(id)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', '유효하지 않은 루틴 ID입니다.')
+  }
+
+  const body = await readBody(req)
+  const fields: Record<string, string> = {}
+  const updateBody: Record<string, unknown> = {}
+
+  if ('title' in body) {
+    const title = typeof body.title === 'string' ? body.title.trim() : ''
+    if (!title) fields.title = 'title은 비워둘 수 없습니다.'
+    else updateBody.title = title
+  }
+  if ('type' in body) {
+    const type = String(body.type)
+    if (!SCHEDULE_TYPES.includes(type as (typeof SCHEDULE_TYPES)[number])) {
+      fields.type = 'type은 schedule, task, reminder 중 하나여야 합니다.'
+    } else {
+      updateBody.type = type
+    }
+  }
+  if ('start_time' in body) {
+    if (body.start_time === null || body.start_time === '') {
+      updateBody.start_time = null
+    } else {
+      const t = String(body.start_time).trim()
+      if (!TIME_HHMM_RE.test(t)) fields.start_time = 'start_time은 HH:MM (24시간) 형식이어야 합니다.'
+      else updateBody.start_time = t
+    }
+  }
+  if ('duration_min' in body) {
+    const n = Number(body.duration_min)
+    if (!Number.isInteger(n) || n < 0 || n > 1440) {
+      fields.duration_min = 'duration_min은 0~1440 사이의 정수여야 합니다.'
+    } else {
+      updateBody.duration_min = n
+    }
+  }
+  if ('weekdays' in body) {
+    updateBody.weekdays = parseWeekdaysField(body.weekdays, fields)
+  }
+  if ('memo' in body) {
+    updateBody.memo = typeof body.memo === 'string' && body.memo.trim() ? body.memo : null
+  }
+  if ('enabled' in body) {
+    updateBody.enabled = Boolean(body.enabled)
+  }
+
+  if (Object.keys(fields).length > 0) {
+    throw new ApiError(400, 'VALIDATION_ERROR', Object.values(fields)[0], fields)
+  }
+  if (Object.keys(updateBody).length === 0) {
+    throw new ApiError(400, 'VALIDATION_ERROR', '수정할 필드가 없습니다.')
+  }
+
+  const { data, error } = await db()
+    .from('routine_templates')
+    .update(updateBody)
+    .eq('id', id)
+    .select(ROUTINE_SELECT)
+    .maybeSingle()
+
+  if (error) throw dbError(error)
+  if (!data) throw new ApiError(404, 'NOT_FOUND', '루틴을 찾을 수 없습니다.')
+  return jsonResponse(data, 200)
+}
+
+async function deleteRoutine(id: string) {
+  if (!UUID_RE.test(id)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', '유효하지 않은 루틴 ID입니다.')
+  }
+  const { data, error } = await db()
+    .from('routine_templates')
+    .delete()
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+
+  if (error) throw dbError(error)
+  if (!data) throw new ApiError(404, 'NOT_FOUND', '루틴을 찾을 수 없습니다.')
+  return jsonResponse({ deleted: true, id }, 200)
 }
 
 const handler = async (req: Request) => {
