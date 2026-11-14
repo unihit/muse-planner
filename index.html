@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Muse Elastic Planner — 일간 타임라인 플래너</title>
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-  <link rel="stylesheet" href="./css/style.css?v=20261114-13" />
+  <link rel="stylesheet" href="./css/style.css?v=20261114-14" />
 </head>
 <body>
   <!-- 로그인 화면 (가계부와 동일 Supabase Auth) -->
@@ -243,6 +243,16 @@
           <span class="preset-label">빠른 블록:</span>
           <div id="presetList" class="preset-list"></div>
           <button id="editPresetsBtn" class="preset-add-btn" title="커스텀 블록 프리셋 추가/편집">+ 커스텀</button>
+        </div>
+
+        <!-- 모바일 전용: 시간 미정 할 일 빠른 배치 트레이 -->
+        <div id="mobileUntimedTray" class="mobile-untimed-tray is-collapsed">
+          <button type="button" id="mobileUntimedTrayToggle" class="mobile-tray-header" aria-expanded="false">
+            <span class="mobile-tray-title">📥 시간 미정 <span id="mobileTrayCount" class="badge">0</span></span>
+            <span class="mobile-tray-hint">길게 눌러 타임라인으로 끌어다 놓기</span>
+            <span class="collapse-chevron" aria-hidden="true">▾</span>
+          </button>
+          <div id="mobileTrayChips" class="mobile-tray-chips"></div>
         </div>
 
         <!-- 스크롤 가능한 타임 캔버스 -->
@@ -670,7 +680,7 @@
   <!-- 토스트 알림 -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./js/api.js?v=20261114-13"></script>
-  <script src="./js/app.js?v=20261114-13"></script>
+  <script src="./js/api.js?v=20261114-14"></script>
+  <script src="./js/app.js?v=20261114-14"></script>
 </body>
 </html>
