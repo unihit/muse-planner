@@ -1869,12 +1869,12 @@
     const pill = document.createElement("div");
     pill.className = "reminder-marker-pill";
     if (staggerCol > 0) {
-      pill.style.marginRight = `${staggerCol * 148}px`;
+      pill.style.setProperty("--stagger-col", String(staggerCol));
     }
     pill.innerHTML = `
-      <span class="reminder-marker-time">🔔 ${minToTimeStr(ev.startMin)}</span>
+      <span class="reminder-marker-icon" aria-hidden="true">🔔</span>
+      <span class="reminder-marker-time">${minToTimeStr(ev.startMin)}</span>
       <span class="reminder-marker-title">${escapeHtml(ev.title)}</span>
-      <button type="button" class="reminder-marker-del" title="삭제" aria-label="알림 삭제">✕</button>
     `;
 
     const line = document.createElement("div");
@@ -1882,12 +1882,6 @@
 
     marker.appendChild(line);
     marker.appendChild(pill);
-
-    pill.querySelector(".reminder-marker-del").addEventListener("pointerdown", (e) => e.stopPropagation());
-    pill.querySelector(".reminder-marker-del").addEventListener("click", (e) => {
-      e.stopPropagation();
-      deleteScheduleById(ev.id);
-    });
 
     bindReminderMarkerInteractions(marker, pill, ev);
     targetLayer.appendChild(marker);
@@ -1942,8 +1936,13 @@
 
   function bindReminderMarkerInteractions(marker, pill, ev) {
     pill.addEventListener("pointerdown", (e) => {
-      if (e.target.closest("button")) return;
       e.stopPropagation();
+    });
+    pill.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (window.matchMedia("(max-width: 960px)").matches) {
+        marker.classList.toggle("is-expanded");
+      }
     });
   }
 
