@@ -94,6 +94,8 @@
     addStagedForm: document.getElementById("addStagedForm"),
     newStagedTitle: document.getElementById("newStagedTitle"),
     newStagedType: document.getElementById("newStagedType"),
+    untimedSection: document.getElementById("untimedSection"),
+    untimedCollapseBtn: document.getElementById("untimedCollapseBtn"),
     untimedCount: document.getElementById("untimedCount"),
     untimedList: document.getElementById("untimedList"),
     placedSection: document.getElementById("placedSection"),
@@ -101,6 +103,8 @@
     placedCount: document.getElementById("placedCount"),
     placedList: document.getElementById("placedList"),
     placedTasksOnlyBtn: document.getElementById("placedTasksOnlyBtn"),
+    reminderSection: document.getElementById("reminderSection"),
+    reminderCollapseBtn: document.getElementById("reminderCollapseBtn"),
     reminderSummaryCount: document.getElementById("reminderSummaryCount"),
     reminderHighlightList: document.getElementById("reminderHighlightList"),
 
@@ -1301,13 +1305,15 @@
     if (el.dimCompletedCheck) el.dimCompletedCheck.checked = prefs.dimCompleted !== false;
     if (el.browserNotifyCheck) el.browserNotifyCheck.checked = Boolean(prefs.browserNotify);
     if (el.showPlacedListCheck) el.showPlacedListCheck.checked = prefs.showPlacedList !== false;
-    if (el.placedSection) {
-      el.placedSection.classList.toggle("hidden", prefs.showPlacedList === false);
-      el.placedSection.classList.toggle("is-collapsed", Boolean(prefs.placedCollapsed));
-    }
-    if (el.placedCollapseBtn) {
-      el.placedCollapseBtn.setAttribute("aria-expanded", String(!prefs.placedCollapsed));
-    }
+    if (el.placedSection) el.placedSection.classList.toggle("hidden", prefs.showPlacedList === false);
+    [
+      [el.untimedSection, el.untimedCollapseBtn, Boolean(prefs.untimedCollapsed)],
+      [el.placedSection, el.placedCollapseBtn, Boolean(prefs.placedCollapsed)],
+      [el.reminderSection, el.reminderCollapseBtn, Boolean(prefs.reminderCollapsed)],
+    ].forEach(([section, btn, collapsed]) => {
+      if (section) section.classList.toggle("is-collapsed", collapsed);
+      if (btn) btn.setAttribute("aria-expanded", String(!collapsed));
+    });
     if (el.placedTasksOnlyBtn) el.placedTasksOnlyBtn.classList.toggle("is-active", Boolean(prefs.placedTasksOnly));
 
     if (el.earlyToggleBtn) {
@@ -3467,10 +3473,16 @@
       showToast(prefs.showPlacedList ? "좌측 배치 목록을 표시합니다." : "좌측 배치 목록을 숨겼습니다.");
     });
 
-    el.placedCollapseBtn?.addEventListener("click", () => {
-      prefs.placedCollapsed = !prefs.placedCollapsed;
-      PlannerAPI.savePrefs(prefs);
-      applyPrefsToUI();
+    [
+      [el.untimedCollapseBtn, "untimedCollapsed"],
+      [el.placedCollapseBtn, "placedCollapsed"],
+      [el.reminderCollapseBtn, "reminderCollapsed"],
+    ].forEach(([btn, prefKey]) => {
+      btn?.addEventListener("click", () => {
+        prefs[prefKey] = !prefs[prefKey];
+        PlannerAPI.savePrefs(prefs);
+        applyPrefsToUI();
+      });
     });
 
     el.placedTasksOnlyBtn?.addEventListener("click", () => {
