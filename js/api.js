@@ -253,47 +253,115 @@
     return `${base}#connect=${encoded}`;
   }
 
+  let cloudPrefsSyncTimer = null;
+
+  function normalizePrefs(parsed) {
+    if (!parsed || typeof parsed !== "object") return structuredCloneSafe(DEFAULT_PREFS);
+
+    const snapNum = Number(parsed.snapMin);
+    const zoomNum = Number(parsed.pxPerMin);
+    const durNum = Number(parsed.defaultDurationMin);
+    const earlyStartHour = clampInt(parsed.earlyStartHour, 0, 11, DEFAULT_PREFS.earlyStartHour);
+    let earlyEndHour = clampInt(parsed.earlyEndHour, 1, 12, DEFAULT_PREFS.earlyEndHour);
+    if (earlyEndHour <= earlyStartHour) {
+      earlyEndHour = Math.min(12, earlyStartHour + 1);
+    }
+    const updatedAt = Number(parsed._updatedAt);
+    return {
+      theme: parsed.theme === "light" ? "light" : "dark",
+      snapMin: [5, 10, 15, 30].includes(snapNum) ? snapNum : DEFAULT_PREFS.snapMin,
+      pxPerMin: Number.isFinite(zoomNum) ? Math.max(1.0, Math.min(2.4, zoomNum)) : DEFAULT_PREFS.pxPerMin,
+      cascadeMode: typeof parsed.cascadeMode === "boolean" ? parsed.cascadeMode : DEFAULT_PREFS.cascadeMode,
+      earlyCollapsed: typeof parsed.earlyCollapsed === "boolean" ? parsed.earlyCollapsed : DEFAULT_PREFS.earlyCollapsed,
+      earlyStartHour,
+      earlyEndHour,
+      defaultDurationMin: [15, 30, 45, 60, 90].includes(durNum) ? durNum : DEFAULT_PREFS.defaultDurationMin,
+      dimCompleted: typeof parsed.dimCompleted === "boolean" ? parsed.dimCompleted : DEFAULT_PREFS.dimCompleted,
+      browserNotify: typeof parsed.browserNotify === "boolean" ? parsed.browserNotify : DEFAULT_PREFS.browserNotify,
+      showPlacedList: typeof parsed.showPlacedList === "boolean" ? parsed.showPlacedList : DEFAULT_PREFS.showPlacedList,
+      placedTasksOnly: typeof parsed.placedTasksOnly === "boolean" ? parsed.placedTasksOnly : DEFAULT_PREFS.placedTasksOnly,
+      untimedCollapsed: typeof parsed.untimedCollapsed === "boolean" ? parsed.untimedCollapsed : DEFAULT_PREFS.untimedCollapsed,
+      placedCollapsed: typeof parsed.placedCollapsed === "boolean" ? parsed.placedCollapsed : DEFAULT_PREFS.placedCollapsed,
+      reminderCollapsed: typeof parsed.reminderCollapsed === "boolean" ? parsed.reminderCollapsed : DEFAULT_PREFS.reminderCollapsed,
+      widgets: { ...DEFAULT_PREFS.widgets, ...(parsed.widgets || {}) },
+      presets: Array.isArray(parsed.presets) && parsed.presets.length ? parsed.presets : structuredCloneSafe(DEFAULT_PREFS.presets),
+      _updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : 0
+    };
+  }
+
   function getPrefs() {
     try {
       const raw = localStorage.getItem(PREFS_KEY);
       if (!raw) return structuredCloneSafe(DEFAULT_PREFS);
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") return structuredCloneSafe(DEFAULT_PREFS);
-
-      const snapNum = Number(parsed.snapMin);
-      const zoomNum = Number(parsed.pxPerMin);
-      const durNum = Number(parsed.defaultDurationMin);
-      const earlyStartHour = clampInt(parsed.earlyStartHour, 0, 11, DEFAULT_PREFS.earlyStartHour);
-      let earlyEndHour = clampInt(parsed.earlyEndHour, 1, 12, DEFAULT_PREFS.earlyEndHour);
-      if (earlyEndHour <= earlyStartHour) {
-        earlyEndHour = Math.min(12, earlyStartHour + 1);
-      }
-      return {
-        theme: parsed.theme === "light" ? "light" : "dark",
-        snapMin: [5, 10, 15, 30].includes(snapNum) ? snapNum : DEFAULT_PREFS.snapMin,
-        pxPerMin: Number.isFinite(zoomNum) ? Math.max(1.0, Math.min(2.4, zoomNum)) : DEFAULT_PREFS.pxPerMin,
-        cascadeMode: typeof parsed.cascadeMode === "boolean" ? parsed.cascadeMode : DEFAULT_PREFS.cascadeMode,
-        earlyCollapsed: typeof parsed.earlyCollapsed === "boolean" ? parsed.earlyCollapsed : DEFAULT_PREFS.earlyCollapsed,
-        earlyStartHour,
-        earlyEndHour,
-        defaultDurationMin: [15, 30, 45, 60, 90].includes(durNum) ? durNum : DEFAULT_PREFS.defaultDurationMin,
-        dimCompleted: typeof parsed.dimCompleted === "boolean" ? parsed.dimCompleted : DEFAULT_PREFS.dimCompleted,
-        browserNotify: typeof parsed.browserNotify === "boolean" ? parsed.browserNotify : DEFAULT_PREFS.browserNotify,
-        showPlacedList: typeof parsed.showPlacedList === "boolean" ? parsed.showPlacedList : DEFAULT_PREFS.showPlacedList,
-        placedTasksOnly: typeof parsed.placedTasksOnly === "boolean" ? parsed.placedTasksOnly : DEFAULT_PREFS.placedTasksOnly,
-        untimedCollapsed: typeof parsed.untimedCollapsed === "boolean" ? parsed.untimedCollapsed : DEFAULT_PREFS.untimedCollapsed,
-        placedCollapsed: typeof parsed.placedCollapsed === "boolean" ? parsed.placedCollapsed : DEFAULT_PREFS.placedCollapsed,
-        reminderCollapsed: typeof parsed.reminderCollapsed === "boolean" ? parsed.reminderCollapsed : DEFAULT_PREFS.reminderCollapsed,
-        widgets: { ...DEFAULT_PREFS.widgets, ...(parsed.widgets || {}) },
-        presets: Array.isArray(parsed.presets) && parsed.presets.length ? parsed.presets : structuredCloneSafe(DEFAULT_PREFS.presets)
-      };
+      return normalizePrefs(JSON.parse(raw));
     } catch {
       return structuredCloneSafe(DEFAULT_PREFS);
     }
   }
 
-  function savePrefs(prefs) {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  async function pushPrefsToCloudNow(prefs) {
+    try {
+      const sb = await getSupabaseClient().catch(() => null);
+      if (!sb) return;
+      const { data: sessData } = await sb.auth.getSession();
+      if (!sessData?.session) return;
+      await sb.auth.updateUser({
+        data: {
+          planner_prefs: normalizePrefs(prefs)
+        }
+      });
+    } catch {
+      // ignore cloud sync error
+    }
+  }
+
+  function scheduleCloudPrefsPush(prefs) {
+    if (cloudPrefsSyncTimer) clearTimeout(cloudPrefsSyncTimer);
+    cloudPrefsSyncTimer = setTimeout(() => {
+      cloudPrefsSyncTimer = null;
+      pushPrefsToCloudNow(prefs);
+    }, 500);
+  }
+
+  function savePrefs(prefs, options = {}) {
+    const normalized = normalizePrefs(prefs);
+    if (!options.preserveUpdatedAt) {
+      normalized._updatedAt = Date.now();
+    }
+    if (prefs && typeof prefs === "object") {
+      prefs._updatedAt = normalized._updatedAt;
+    }
+    localStorage.setItem(PREFS_KEY, JSON.stringify(normalized));
+    if (!options.skipCloudSync) {
+      scheduleCloudPrefsPush(normalized);
+    }
+  }
+
+  async function syncPrefsFromCloud() {
+    try {
+      const sb = await getSupabaseClient().catch(() => null);
+      if (!sb) return null;
+      const { data: sessData } = await sb.auth.getSession();
+      if (!sessData?.session) return null;
+
+      const { data: userData } = await sb.auth.getUser().catch(() => ({ data: null }));
+      const cloudRaw = userData?.user?.user_metadata?.planner_prefs || sessData.session.user?.user_metadata?.planner_prefs;
+      const local = getPrefs();
+      const cloudUpdatedAt = Number(cloudRaw?._updatedAt) || 0;
+      const localUpdatedAt = Number(local?._updatedAt) || 0;
+
+      if (cloudRaw && typeof cloudRaw === "object" && cloudUpdatedAt > localUpdatedAt) {
+        const synced = normalizePrefs(cloudRaw);
+        savePrefs(synced, { skipCloudSync: true, preserveUpdatedAt: true });
+        return synced;
+      }
+      if (localUpdatedAt > cloudUpdatedAt) {
+        await pushPrefsToCloudNow(local);
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   function getDefaultPresets() {
@@ -1152,6 +1220,7 @@
     signOutSupabase,
     getPrefs,
     savePrefs,
+    syncPrefsFromCloud,
     getDefaultPresets,
     resetPrefsToDefault,
     resetLocalSeed,

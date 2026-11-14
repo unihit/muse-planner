@@ -4005,6 +4005,18 @@
 
   bindControls();
 
+  async function syncCloudPrefs() {
+    try {
+      const synced = await PlannerAPI.syncPrefsFromCloud?.();
+      if (!synced) return;
+      prefs = synced;
+      applyPrefsToUI();
+      renderAll();
+    } catch {
+      // ignore
+    }
+  }
+
   (async function bootstrap() {
     try {
       supabaseSession = await PlannerAPI.getSupabaseSession();
@@ -4016,6 +4028,7 @@
           updateSupabaseAuthUi();
           if (supabaseSession) {
             setupRealtimeSync(true);
+            syncCloudPrefs();
           } else {
             disconnectRealtime();
           }
@@ -4027,7 +4040,7 @@
 
     updateSupabaseAuthUi();
     if (supabaseSession) {
-      await loadDay(currentDate);
+      await Promise.all([loadDay(currentDate), syncCloudPrefs()]);
     } else {
       updateApiBadge();
     }
@@ -4037,6 +4050,7 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       syncIfChanged(true, { force: true });
+      syncCloudPrefs();
       setupRealtimeSync();
     }
   });
