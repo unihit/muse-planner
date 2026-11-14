@@ -1303,6 +1303,12 @@ html[data-theme="light"] .reminder-pill-time {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.reminder-pill-title:hover {
+  color: var(--accent-hover);
 }
 
 .dock-card-top {
@@ -1894,6 +1900,11 @@ html[data-theme="light"] .reminder-marker-time {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 0.12s ease;
+}
+
+.reminder-marker-pill:hover .reminder-marker-title {
+  color: var(--accent-hover);
 }
 
 .reminder-marker-del {
