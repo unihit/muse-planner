@@ -34,6 +34,10 @@
     pxPerMin: 1.45,
     cascadeMode: true,
     earlyCollapsed: true,
+    earlyEndHour: 7,
+    defaultDurationMin: 30,
+    dimCompleted: true,
+    browserNotify: false,
     widgets: {
       summary: true,
       youtube: true,
@@ -246,11 +250,23 @@
       const raw = localStorage.getItem(PREFS_KEY);
       if (!raw) return structuredCloneSafe(DEFAULT_PREFS);
       const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return structuredCloneSafe(DEFAULT_PREFS);
+
+      const snapNum = Number(parsed.snapMin);
+      const zoomNum = Number(parsed.pxPerMin);
+      const durNum = Number(parsed.defaultDurationMin);
       return {
-        ...DEFAULT_PREFS,
-        ...parsed,
+        theme: parsed.theme === "light" ? "light" : "dark",
+        snapMin: [5, 10, 15, 30].includes(snapNum) ? snapNum : DEFAULT_PREFS.snapMin,
+        pxPerMin: Number.isFinite(zoomNum) ? Math.max(1.0, Math.min(2.4, zoomNum)) : DEFAULT_PREFS.pxPerMin,
+        cascadeMode: typeof parsed.cascadeMode === "boolean" ? parsed.cascadeMode : DEFAULT_PREFS.cascadeMode,
+        earlyCollapsed: typeof parsed.earlyCollapsed === "boolean" ? parsed.earlyCollapsed : DEFAULT_PREFS.earlyCollapsed,
+        earlyEndHour: clampInt(parsed.earlyEndHour, 5, 9, DEFAULT_PREFS.earlyEndHour),
+        defaultDurationMin: [15, 30, 45, 60, 90].includes(durNum) ? durNum : DEFAULT_PREFS.defaultDurationMin,
+        dimCompleted: typeof parsed.dimCompleted === "boolean" ? parsed.dimCompleted : DEFAULT_PREFS.dimCompleted,
+        browserNotify: typeof parsed.browserNotify === "boolean" ? parsed.browserNotify : DEFAULT_PREFS.browserNotify,
         widgets: { ...DEFAULT_PREFS.widgets, ...(parsed.widgets || {}) },
-        presets: Array.isArray(parsed.presets) && parsed.presets.length ? parsed.presets : DEFAULT_PREFS.presets
+        presets: Array.isArray(parsed.presets) && parsed.presets.length ? parsed.presets : structuredCloneSafe(DEFAULT_PREFS.presets)
       };
     } catch {
       return structuredCloneSafe(DEFAULT_PREFS);
@@ -259,6 +275,16 @@
 
   function savePrefs(prefs) {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  }
+
+  function getDefaultPresets() {
+    return structuredCloneSafe(DEFAULT_PREFS.presets);
+  }
+
+  function resetPrefsToDefault() {
+    const fresh = structuredCloneSafe(DEFAULT_PREFS);
+    savePrefs(fresh);
+    return fresh;
   }
 
   /* -------------------- 스키마 정규화 (DB <-> 프론트 모델) -------------------- */
@@ -861,6 +887,8 @@
     signOutSupabase,
     getPrefs,
     savePrefs,
+    getDefaultPresets,
+    resetPrefsToDefault,
     resetLocalSeed,
     loadWidgetsState,
     saveWidgetsState,

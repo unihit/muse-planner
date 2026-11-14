@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Muse Elastic Planner — 일간 타임라인 플래너</title>
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-  <link rel="stylesheet" href="./css/style.css?v=20261114-9" />
+  <link rel="stylesheet" href="./css/style.css?v=20261114-10" />
 </head>
 <body>
   <!-- 로그인 화면 (가계부와 동일 Supabase Auth) -->
@@ -128,35 +128,6 @@
 
       <!-- 우측 툴바 -->
       <div class="header-right">
-        <label class="control-pill" title="드래그 & 리사이즈 스냅 단위">
-          <span>스냅</span>
-          <select id="snapSelect">
-            <option value="5">5분</option>
-            <option value="10">10분</option>
-            <option value="15" selected>15분</option>
-            <option value="30">30분</option>
-          </select>
-        </label>
-
-        <label class="control-pill" title="타임라인 높이(줌) 조절">
-          <span>줌</span>
-          <input id="zoomRange" type="range" min="1.0" max="2.4" step="0.15" value="1.45" />
-        </label>
-
-        <button id="cascadeToggleBtn" class="toggle-btn active" title="앞 일정을 늘리면 뒤 일정도 자동으로 밀기">
-          <span class="dot"></span> 연쇄 밀기
-        </button>
-
-        <button id="themeToggleBtn" class="icon-btn theme-toggle-btn" title="라이트 모드로 전환" aria-label="라이트 모드로 전환">
-          <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="4"></circle>
-            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
-          </svg>
-          <svg class="icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>
-          </svg>
-        </button>
-
         <button id="undoBtn" class="icon-btn" title="실행 취소 (Ctrl+Z)" aria-label="실행 취소" disabled>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 7v6h6"></path>
@@ -171,9 +142,13 @@
           </svg>
         </button>
 
-        <button id="openApiModalBtn" class="api-pill" title="계정 로그인 및 동기화 설정">
+        <button id="openApiModalBtn" class="api-pill" title="계정 로그인 및 동기화 상태">
           <span id="apiSourceDot" class="source-dot local"></span>
           <span id="apiSourceLabel">연결 확인 중</span>
+        </button>
+
+        <button id="openSettingsBtn" class="settings-trigger-btn" title="플래너 설정" aria-label="플래너 설정">
+          ⚙️ 설정
         </button>
       </div>
     </header>
@@ -284,12 +259,6 @@
               <line x1="18" y1="16" x2="22" y2="16"></line>
             </svg>
           </button>
-        </div>
-
-        <div id="widgetConfigMenu" class="widget-config-menu hidden">
-          <label><input type="checkbox" data-widget="summary" checked /> 📊 오늘 완료율 & 유형 배분</label>
-          <label><input type="checkbox" data-widget="youtube" checked /> 📺 유튜브 볼 리스트</label>
-          <label><input type="checkbox" data-widget="memo" checked /> 📝 퀵 스크래치패드</label>
         </div>
 
         <div class="panel-scroll right-widgets">
@@ -417,84 +386,258 @@
     </div>
   </div>
 
-  <!-- 커스텀 프리셋 관리 모달 -->
-  <div id="presetModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
-    <div class="modal-card modal-sm">
+  <!-- 통합 플래너 설정 모달 -->
+  <div id="apiModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+    <div class="modal-card modal-lg settings-modal-card">
       <div class="modal-header">
-        <h3>🎨 커스텀 빠른 블록 관리</h3>
-        <button class="modal-close" data-close="presetModal">✕</button>
+        <h3 id="settingsModalTitle">⚙️ 플래너 설정</h3>
+        <button type="button" class="modal-close" data-close="apiModal" aria-label="설정 닫기">✕</button>
       </div>
-      <div class="modal-body">
-        <div id="presetManageList" class="preset-manage-list"></div>
-        <form id="addPresetForm" class="preset-add-form">
-          <input id="presetIcon" type="text" value="⚡" maxlength="2" class="icon-input" aria-label="아이콘" />
-          <input id="presetTitle" type="text" placeholder="블록 이름" required />
-          <select id="presetDuration">
-            <option value="0">시작만</option>
-            <option value="15">15분</option>
-            <option value="30" selected>30분</option>
-            <option value="60">60분</option>
-            <option value="90">90분</option>
-          </select>
-          <select id="presetType">
-            <option value="schedule">일정</option>
-            <option value="task">할 일</option>
-            <option value="reminder">알림</option>
-          </select>
-          <button type="submit" class="btn-primary">추가</button>
-        </form>
-      </div>
-    </div>
-  </div>
 
-  <!-- 계정 관리 모달 -->
-  <div id="apiModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>🔐 가계부 계정 연동</h3>
-        <button class="modal-close" data-close="apiModal">✕</button>
-      </div>
-      <form id="apiSettingsForm" class="modal-body">
-        <div id="supabaseFields" class="provider-fields">
-          <div id="sbSignedInBox" class="sb-signed-in-box hidden">
-            <div class="sb-user-meta">
-              <strong>✅ 로그인됨</strong>
-              <span id="sbUserEmail">-</span>
-            </div>
-            <button type="button" id="sbLogoutBtn" class="btn-secondary">로그아웃</button>
+      <div id="settingsModalBody" class="modal-body settings-sections">
+        <!-- 1. 타임라인 & 일정 편집 -->
+        <section class="settings-section" id="settingsTimelineSection">
+          <div class="settings-section-head">
+            <h4>⏱️ 타임라인 &amp; 일정 편집</h4>
           </div>
-          <div id="sbLoginFormBox" class="sb-login-box">
-            <label class="field">
-              <span>이메일 (ssen-ledger 계정)</span>
-              <input id="sbLoginEmail" type="email" placeholder="example@gmail.com" autocomplete="username" />
-            </label>
-            <label class="field">
-              <span>비밀번호</span>
-              <input id="sbLoginPassword" type="password" placeholder="비밀번호 입력..." autocomplete="current-password" />
-            </label>
-            <div class="sb-login-actions">
-              <p class="api-note">
-                🔑 가계부와 동일한 계정으로 로그인하면 일정이 실시간 동기화됩니다.
-              </p>
-              <button type="button" id="sbLoginBtn" class="btn-primary">로그인</button>
+
+          <div class="settings-row">
+            <div class="settings-row-info">
+              <strong>스냅 단위</strong>
+              <span>드래그·리사이즈 및 슬롯 배치 시간 간격</span>
+            </div>
+            <div class="settings-control">
+              <select id="snapSelect">
+                <option value="5">5분</option>
+                <option value="10">10분</option>
+                <option value="15" selected>15분</option>
+                <option value="30">30분</option>
+              </select>
             </div>
           </div>
-        </div>
 
-        <div class="modal-footer">
-          <div></div>
-          <div class="footer-right">
-            <button type="button" class="btn-secondary" data-close="apiModal">닫기</button>
+          <div class="settings-row">
+            <div class="settings-row-info">
+              <strong>타임라인 높이 (줌)</strong>
+              <span>시간당 세로 확대 배율</span>
+            </div>
+            <div class="settings-control settings-range-wrap">
+              <input id="zoomRange" type="range" min="1.0" max="2.4" step="0.15" value="1.45" />
+              <span id="zoomValueLabel" class="settings-range-val">1.45x</span>
+            </div>
           </div>
+
+          <div class="settings-row">
+            <div class="settings-row-info">
+              <strong>새 일정 기본 길이</strong>
+              <span>빈 슬롯 클릭 또는 + 새 일정 추가 시 기본 시간</span>
+            </div>
+            <div class="settings-control">
+              <select id="defaultDurationSelect">
+                <option value="15">15분</option>
+                <option value="30" selected>30분 (기본)</option>
+                <option value="45">45분</option>
+                <option value="60">1시간</option>
+                <option value="90">1시간 30분</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <div class="settings-row-info">
+              <strong>새벽 접기 기준 시각</strong>
+              <span>새벽 구간 접기 시 00:00부터 숨길 종료 시각</span>
+            </div>
+            <div class="settings-control">
+              <select id="earlyEndHourSelect">
+                <option value="5">05:00까지</option>
+                <option value="6">06:00까지</option>
+                <option value="7" selected>07:00까지 (기본)</option>
+                <option value="8">08:00까지</option>
+                <option value="9">09:00까지</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <div class="settings-row-info">
+              <strong>새벽 시간 접기</strong>
+              <span>새벽 시간대를 한 줄 배너로 접어서 보기</span>
+            </div>
+            <div class="settings-control">
+              <label class="settings-toggle">
+                <input id="earlyCollapsedCheck" type="checkbox" checked />
+                <span>접힘 사용</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <div class="settings-row-info">
+              <strong>연쇄 밀기 모드</strong>
+              <span>앞 일정 시간을 늘리면 뒤 일정도 함께 뒤로 이동</span>
+            </div>
+            <div class="settings-control">
+              <label class="settings-toggle">
+                <input id="cascadeCheck" type="checkbox" checked />
+                <span>사용</span>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. 화면 & 위젯 · 알림 -->
+        <section class="settings-section" id="settingsDisplaySection">
+          <div class="settings-section-head">
+            <h4>🎨 화면 &amp; 위젯 · 알림</h4>
+          </div>
+
+          <div class="settings-row">
+            <div class="settings-row-info">
+              <strong>화면 테마</strong>
+              <span>다크 / 라이트 모드 전환</span>
+            </div>
+            <div class="settings-control">
+              <select id="themeSelect">
+                <option value="dark">🌙 다크 모드</option>
+                <option value="light">☀️ 라이트 모드</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <div class="settings-row-info">
+              <strong>완료된 일정 흐리게 표시</strong>
+              <span>체크한 일정을 반투명·취소선 처리해 진행 중 일정 집중</span>
+            </div>
+            <div class="settings-control">
+              <label class="settings-toggle">
+                <input id="dimCompletedCheck" type="checkbox" checked />
+                <span>흐리게 표시</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <div class="settings-row-info">
+              <strong>브라우저 시작 알림</strong>
+              <span>오늘 미완료 일정의 시작 시각에 도달하면 알림 띄우기</span>
+            </div>
+            <div class="settings-control">
+              <label class="settings-toggle">
+                <input id="browserNotifyCheck" type="checkbox" />
+                <span>정각 알림</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-row settings-row-col">
+            <div class="settings-row-info">
+              <strong>우측 패널 위젯 표시</strong>
+              <span>필요한 위젯만 골라 표시합니다.</span>
+            </div>
+            <div id="settingsWidgetChecks" class="settings-widget-grid">
+              <label class="settings-widget-chip">
+                <input type="checkbox" data-widget="summary" checked />
+                <span>📊 오늘 완료율 &amp; 유형 배분</span>
+              </label>
+              <label class="settings-widget-chip">
+                <input type="checkbox" data-widget="youtube" checked />
+                <span>📺 유튜브 볼 리스트</span>
+              </label>
+              <label class="settings-widget-chip">
+                <input type="checkbox" data-widget="memo" checked />
+                <span>📝 퀵 스크래치패드</span>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. 빠른 블록 프리셋 관리 -->
+        <section class="settings-section" id="settingsPresetSection">
+          <div class="settings-section-head">
+            <h4>⚡ 빠른 블록 프리셋 관리</h4>
+            <button type="button" id="resetPresetsBtn" class="btn-secondary btn-xs">기본값 복원</button>
+          </div>
+          <div id="presetManageList" class="preset-manage-list"></div>
+          <form id="addPresetForm" class="preset-add-form">
+            <input id="presetIcon" type="text" value="⚡" maxlength="2" class="icon-input" aria-label="아이콘" />
+            <input id="presetTitle" type="text" placeholder="블록 이름" required />
+            <select id="presetDuration">
+              <option value="0">시작만</option>
+              <option value="15">15분</option>
+              <option value="30" selected>30분</option>
+              <option value="60">60분</option>
+              <option value="90">90분</option>
+            </select>
+            <select id="presetType">
+              <option value="schedule">일정</option>
+              <option value="task">할 일</option>
+              <option value="reminder">알림</option>
+            </select>
+            <button type="submit" class="btn-primary">추가</button>
+          </form>
+        </section>
+
+        <!-- 4. 가계부 계정 & 초기화 -->
+        <section class="settings-section" id="settingsAccountSection">
+          <div class="settings-section-head">
+            <h4>🔐 가계부 계정 &amp; 초기화</h4>
+          </div>
+
+          <form id="apiSettingsForm">
+            <div id="supabaseFields" class="provider-fields">
+              <div id="sbSignedInBox" class="sb-signed-in-box hidden">
+                <div class="sb-user-meta">
+                  <strong>✅ 로그인됨</strong>
+                  <span id="sbUserEmail">-</span>
+                </div>
+                <button type="button" id="sbLogoutBtn" class="btn-secondary">로그아웃</button>
+              </div>
+              <div id="sbLoginFormBox" class="sb-login-box">
+                <label class="field">
+                  <span>이메일 (ssen-ledger 계정)</span>
+                  <input id="sbLoginEmail" type="email" placeholder="example@gmail.com" autocomplete="username" />
+                </label>
+                <label class="field">
+                  <span>비밀번호</span>
+                  <input id="sbLoginPassword" type="password" placeholder="비밀번호 입력..." autocomplete="current-password" />
+                </label>
+                <div class="sb-login-actions">
+                  <p class="api-note">
+                    🔑 가계부와 동일한 계정으로 로그인하면 일정이 실시간 동기화됩니다.
+                  </p>
+                  <button type="button" id="sbLoginBtn" class="btn-primary">로그인</button>
+                </div>
+              </div>
+            </div>
+          </form>
+
+          <div class="settings-row settings-row-danger">
+            <div class="settings-row-info">
+              <strong>로컬 설정 초기화</strong>
+              <span>테마·스냅·줌·위젯·프리셋 등 화면 설정만 기본값으로 복원합니다. (일정 데이터 유지)</span>
+            </div>
+            <div class="settings-control">
+              <button type="button" id="resetAllPrefsBtn" class="btn-danger btn-xs">모든 설정 초기화</button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="modal-footer settings-modal-footer">
+        <span class="api-note">설정 변경사항은 즉시 적용되며 브라우저에 자동 저장됩니다.</span>
+        <div class="footer-right">
+          <button type="button" class="btn-primary" data-close="apiModal">닫기</button>
         </div>
-      </form>
+      </div>
     </div>
   </div>
 
   <!-- 토스트 알림 -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./js/api.js?v=20261114-9"></script>
-  <script src="./js/app.js?v=20261114-9"></script>
+  <script src="./js/api.js?v=20261114-10"></script>
+  <script src="./js/app.js?v=20261114-10"></script>
 </body>
 </html>

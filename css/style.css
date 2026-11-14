@@ -745,6 +745,26 @@ html[data-theme="light"] .action-btn {
   border-color: var(--accent);
 }
 
+.settings-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: all 0.16s ease;
+}
+
+.settings-trigger-btn:hover {
+  background: var(--surface-3);
+  border-color: var(--accent);
+}
+
 .source-dot {
   width: 8px;
   height: 8px;
@@ -1498,6 +1518,19 @@ html[data-theme="light"] .badge-src {
 
 .event-block.is-done .event-title {
   text-decoration: line-through;
+}
+
+body.no-dim-completed .event-block.is-done,
+body.no-dim-completed .dock-card.is-done,
+body.no-dim-completed .reminder-pill-card.is-done {
+  opacity: 1;
+  filter: none;
+}
+
+body.no-dim-completed .event-block.is-done .event-title,
+body.no-dim-completed .dock-card.is-done .dock-card-title,
+body.no-dim-completed .reminder-pill-card.is-done .reminder-pill-title {
+  text-decoration: none;
 }
 
 .event-block.is-filtered-out {
@@ -2472,20 +2505,212 @@ html[data-theme="light"] .modal-backdrop {
 .preset-add-form {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .preset-add-form input,
 .preset-add-form select {
-  background: var(--surface-2);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px;
+  padding: 6px 8px;
   font-size: 12px;
+  color: var(--text);
+}
+
+#presetTitle {
+  flex: 1;
+  min-width: 120px;
 }
 
 .icon-input {
   width: 40px;
   text-align: center;
+}
+
+/* 통합 설정 모달 */
+.settings-modal-card {
+  max-height: min(88vh, 760px);
+}
+
+.settings-sections {
+  gap: 14px;
+}
+
+.settings-section {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-section-head h4 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 2px 0;
+}
+
+.settings-row-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.settings-row-danger {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.settings-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-row-info strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings-row-info span {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.settings-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-control select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  outline: none;
+  min-width: 132px;
+}
+
+.settings-control select:focus {
+  border-color: var(--accent);
+}
+
+.settings-range-wrap input[type="range"] {
+  width: 112px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-range-val {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.settings-toggle:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.settings-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.settings-widget-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-widget-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.settings-widget-chip:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.settings-widget-chip input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.btn-xs {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.settings-modal-footer {
+  margin-top: 0;
+  padding: 11px 16px;
+  background: var(--surface);
 }
 
 /* 토스트 */
@@ -2692,6 +2917,29 @@ html[data-theme="light"] .modal-backdrop {
   .btn-danger {
     padding: 9px 14px;
     font-size: 13px;
+  }
+  .btn-xs {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .settings-modal-card {
+    max-height: calc(100dvh - 20px);
+  }
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .settings-control {
+    justify-content: space-between;
+  }
+  .settings-control select {
+    width: 100%;
+    font-size: 14px;
+    padding: 7px 10px;
+  }
+  .settings-widget-grid {
+    grid-template-columns: 1fr;
   }
 }
 

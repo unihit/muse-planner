@@ -1,5 +1,4 @@
 (function () {
-  const EARLY_END_MIN = 420; // 07:00
   const COLLAPSED_EARLY_HEIGHT = 30;
   const TYPE_META = {
     schedule: { label: "일정", badge: "일정", color: "#3b82f6" },
@@ -14,6 +13,7 @@
   let selectedEventId = null;
   let touchDraftSlot = null;
   let activeTypeFilter = "all";
+  const notifiedEventKeys = new Set();
   let activeHtmlDragPayload = null;
   let activePointerDrag = false;
   let toastTimer = null;
@@ -63,13 +63,10 @@
     nowDoneBtn: document.getElementById("nowDoneBtn"),
     islandNextInfo: document.getElementById("islandNextInfo"),
     islandReminderInfo: document.getElementById("islandReminderInfo"),
-    snapSelect: document.getElementById("snapSelect"),
-    zoomRange: document.getElementById("zoomRange"),
-    cascadeToggleBtn: document.getElementById("cascadeToggleBtn"),
-    themeToggleBtn: document.getElementById("themeToggleBtn"),
     undoBtn: document.getElementById("undoBtn"),
     syncNowBtn: document.getElementById("syncNowBtn"),
     openApiModalBtn: document.getElementById("openApiModalBtn"),
+    openSettingsBtn: document.getElementById("openSettingsBtn"),
     apiSourceDot: document.getElementById("apiSourceDot"),
     apiSourceLabel: document.getElementById("apiSourceLabel"),
 
@@ -97,7 +94,6 @@
     eventsLayer: document.getElementById("eventsLayer"),
 
     widgetConfigBtn: document.getElementById("widgetConfigBtn"),
-    widgetConfigMenu: document.getElementById("widgetConfigMenu"),
     completionPercent: document.getElementById("completionPercent"),
     statTotalCount: document.getElementById("statTotalCount"),
     statDoneCount: document.getElementById("statDoneCount"),
@@ -128,7 +124,6 @@
     editMemo: document.getElementById("editMemo"),
     deleteEventModalBtn: document.getElementById("deleteEventModalBtn"),
 
-    presetModal: document.getElementById("presetModal"),
     presetManageList: document.getElementById("presetManageList"),
     addPresetForm: document.getElementById("addPresetForm"),
     presetIcon: document.getElementById("presetIcon"),
@@ -137,6 +132,24 @@
     presetType: document.getElementById("presetType"),
 
     apiModal: document.getElementById("apiModal"),
+    settingsModalBody: document.getElementById("settingsModalBody"),
+    settingsTimelineSection: document.getElementById("settingsTimelineSection"),
+    settingsDisplaySection: document.getElementById("settingsDisplaySection"),
+    settingsPresetSection: document.getElementById("settingsPresetSection"),
+    settingsAccountSection: document.getElementById("settingsAccountSection"),
+    snapSelect: document.getElementById("snapSelect"),
+    zoomRange: document.getElementById("zoomRange"),
+    zoomValueLabel: document.getElementById("zoomValueLabel"),
+    defaultDurationSelect: document.getElementById("defaultDurationSelect"),
+    earlyEndHourSelect: document.getElementById("earlyEndHourSelect"),
+    earlyCollapsedCheck: document.getElementById("earlyCollapsedCheck"),
+    cascadeCheck: document.getElementById("cascadeCheck"),
+    themeSelect: document.getElementById("themeSelect"),
+    dimCompletedCheck: document.getElementById("dimCompletedCheck"),
+    browserNotifyCheck: document.getElementById("browserNotifyCheck"),
+    settingsWidgetChecks: document.getElementById("settingsWidgetChecks"),
+    resetPresetsBtn: document.getElementById("resetPresetsBtn"),
+    resetAllPrefsBtn: document.getElementById("resetAllPrefsBtn"),
     authGate: document.getElementById("authGate"),
     authGateForm: document.getElementById("authGateForm"),
     authGateEmail: document.getElementById("authGateEmail"),
@@ -252,29 +265,42 @@
 
   /* -------------------- 좌표 <-> 시간 변환 -------------------- */
 
+  function getEarlyEndMin() {
+    const h = Number(prefs.earlyEndHour);
+    const clampedHour = Number.isFinite(h) ? clamp(Math.round(h), 5, 9) : 7;
+    return clampedHour * 60;
+  }
+
+  function getDefaultDurationMin() {
+    const d = Number(prefs.defaultDurationMin);
+    return [15, 30, 45, 60, 90].includes(d) ? d : 30;
+  }
+
   function minToY(min) {
     if (!prefs.earlyCollapsed) {
       return min * prefs.pxPerMin;
     }
-    if (min <= EARLY_END_MIN) {
-      return (min / EARLY_END_MIN) * COLLAPSED_EARLY_HEIGHT;
+    const earlyEndMin = getEarlyEndMin();
+    if (min <= earlyEndMin) {
+      return (min / earlyEndMin) * COLLAPSED_EARLY_HEIGHT;
     }
-    return COLLAPSED_EARLY_HEIGHT + (min - EARLY_END_MIN) * prefs.pxPerMin;
+    return COLLAPSED_EARLY_HEIGHT + (min - earlyEndMin) * prefs.pxPerMin;
   }
 
   function yToMin(y) {
     if (!prefs.earlyCollapsed) {
       return clamp(y / prefs.pxPerMin, 0, 1440);
     }
+    const earlyEndMin = getEarlyEndMin();
     if (y <= COLLAPSED_EARLY_HEIGHT) {
-      return EARLY_END_MIN;
+      return earlyEndMin;
     }
-    return clamp(EARLY_END_MIN + (y - COLLAPSED_EARLY_HEIGHT) / prefs.pxPerMin, EARLY_END_MIN, 1440);
+    return clamp(earlyEndMin + (y - COLLAPSED_EARLY_HEIGHT) / prefs.pxPerMin, earlyEndMin, 1440);
   }
 
   function getTimelineTotalHeight() {
     if (!prefs.earlyCollapsed) return 1440 * prefs.pxPerMin;
-    return COLLAPSED_EARLY_HEIGHT + (1440 - EARLY_END_MIN) * prefs.pxPerMin;
+    return COLLAPSED_EARLY_HEIGHT + (1440 - getEarlyEndMin()) * prefs.pxPerMin;
   }
 
   /* -------------------- 상태 분류 & 컬럼 배치 -------------------- */
@@ -339,15 +365,16 @@
     return layoutMap;
   }
 
-  function findNextAvailableSlot(durationMin = 30) {
+  function findNextAvailableSlot(durationMin = getDefaultDurationMin()) {
+    const earlyEndMin = getEarlyEndMin();
     const step = prefs.snapMin || 15;
     const timed = schedules.filter((e) => e.hasStartAt).sort((a, b) => a.startMin - b.startMin);
     const startSearch = isViewingToday()
-      ? Math.max(EARLY_END_MIN, Math.ceil(getNowKstMinutes() / step) * step)
+      ? Math.max(earlyEndMin, Math.ceil(getNowKstMinutes() / step) * step)
       : 540;
 
     let candidate = startSearch;
-    const span = Math.max(15, durationMin || 30);
+    const span = Math.max(15, durationMin || getDefaultDurationMin());
     for (const ev of timed) {
       if (candidate + span <= ev.startMin) {
         return candidate;
@@ -356,7 +383,7 @@
         candidate = Math.ceil(ev.visualEndMin / step) * step;
       }
     }
-    return clamp(candidate, EARLY_END_MIN, 1440 - span);
+    return clamp(candidate, earlyEndMin, 1440 - span);
   }
 
   /* -------------------- API 호출 래퍼 -------------------- */
@@ -557,14 +584,15 @@
   }
 
   function scrollToOptimalPosition() {
+    const earlyEndMin = getEarlyEndMin();
     const timed = schedules.filter((e) => e.hasStartAt);
     let targetMin = 540;
     if (isViewingToday()) {
       const nowMin = getNowKstMinutes();
       const firstTimedMin = timed.length ? timed[0].startMin : nowMin;
-      targetMin = Math.max(EARLY_END_MIN, Math.min(nowMin, firstTimedMin) - 45);
+      targetMin = Math.max(earlyEndMin, Math.min(nowMin, firstTimedMin) - 45);
     } else if (timed.length) {
-      targetMin = Math.max(EARLY_END_MIN, timed[0].startMin - 45);
+      targetMin = Math.max(earlyEndMin, timed[0].startMin - 45);
     }
     el.timelineScroll.scrollTop = Math.max(0, minToY(targetMin) - 18);
   }
@@ -819,21 +847,29 @@
 
   function applyPrefsToUI() {
     document.documentElement.setAttribute("data-theme", prefs.theme);
-    const themeLabel = prefs.theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환";
-    el.themeToggleBtn.setAttribute("title", themeLabel);
-    el.themeToggleBtn.setAttribute("aria-label", themeLabel);
+    document.body.classList.toggle("no-dim-completed", prefs.dimCompleted === false);
 
-    el.snapSelect.value = String(prefs.snapMin);
-    el.zoomRange.value = String(prefs.pxPerMin);
-    el.cascadeToggleBtn.classList.toggle("active", prefs.cascadeMode);
-    el.earlyToggleBtn.classList.toggle("active", prefs.earlyCollapsed);
-    el.earlyToggleBtn.textContent = prefs.earlyCollapsed ? "🌙 새벽 접힘" : "☀️ 전체 24h";
+    if (el.snapSelect) el.snapSelect.value = String(prefs.snapMin);
+    if (el.zoomRange) el.zoomRange.value = String(prefs.pxPerMin);
+    if (el.zoomValueLabel) el.zoomValueLabel.textContent = `${Number(prefs.pxPerMin).toFixed(2)}x`;
+    if (el.defaultDurationSelect) el.defaultDurationSelect.value = String(getDefaultDurationMin());
+    if (el.earlyEndHourSelect) el.earlyEndHourSelect.value = String(Math.round(getEarlyEndMin() / 60));
+    if (el.earlyCollapsedCheck) el.earlyCollapsedCheck.checked = Boolean(prefs.earlyCollapsed);
+    if (el.cascadeCheck) el.cascadeCheck.checked = Boolean(prefs.cascadeMode);
+    if (el.themeSelect) el.themeSelect.value = prefs.theme;
+    if (el.dimCompletedCheck) el.dimCompletedCheck.checked = prefs.dimCompleted !== false;
+    if (el.browserNotifyCheck) el.browserNotifyCheck.checked = Boolean(prefs.browserNotify);
 
-    Object.entries(prefs.widgets).forEach(([key, visible]) => {
+    if (el.earlyToggleBtn) {
+      el.earlyToggleBtn.classList.toggle("active", prefs.earlyCollapsed);
+      el.earlyToggleBtn.textContent = prefs.earlyCollapsed ? "🌙 새벽 접힘" : "☀️ 전체 24h";
+    }
+
+    Object.entries(prefs.widgets || {}).forEach(([key, visible]) => {
       const card = document.getElementById(`widget-${key}`);
       if (card) card.classList.toggle("hidden", !visible);
-      const cb = el.widgetConfigMenu.querySelector(`input[data-widget="${key}"]`);
-      if (cb) cb.checked = visible;
+      const cb = el.settingsWidgetChecks?.querySelector(`input[data-widget="${key}"]`);
+      if (cb) cb.checked = Boolean(visible);
     });
   }
 
@@ -1067,12 +1103,16 @@
     el.timelineGrid.style.height = `${totalH}px`;
     el.hourRowsLayer.innerHTML = "";
 
+    const earlyEndMin = getEarlyEndMin();
+    const earlyEndHour = Math.round(earlyEndMin / 60);
+    const earlyEndLabel = `${String(earlyEndHour).padStart(2, "0")}:00`;
+
     if (prefs.earlyCollapsed) {
-      const earlyCount = schedules.filter((e) => e.hasStartAt && e.startMin < EARLY_END_MIN).length;
+      const earlyCount = schedules.filter((e) => e.hasStartAt && e.startMin < earlyEndMin).length;
       const banner = document.createElement("div");
       banner.className = "early-collapsed-banner";
       banner.style.height = `${COLLAPSED_EARLY_HEIGHT}px`;
-      banner.innerHTML = `<span>🌙 새벽 00:00 ~ 07:00 접힘 (클릭해 펼치기${earlyCount ? ` · 일정 ${earlyCount}개` : ""})</span>`;
+      banner.innerHTML = `<span>🌙 새벽 00:00 ~ ${earlyEndLabel} 접힘 (클릭해 펼치기${earlyCount ? ` · 일정 ${earlyCount}개` : ""})</span>`;
       banner.addEventListener("click", () => {
         prefs.earlyCollapsed = false;
         PlannerAPI.savePrefs(prefs);
@@ -1081,7 +1121,7 @@
       el.hourRowsLayer.appendChild(banner);
     }
 
-    const startHour = prefs.earlyCollapsed ? 7 : 0;
+    const startHour = prefs.earlyCollapsed ? earlyEndHour : 0;
     const hourPx = 60 * prefs.pxPerMin;
     for (let h = startHour; h < 24; h++) {
       const row = document.createElement("div");
@@ -1094,17 +1134,18 @@
 
   function renderEvents() {
     el.eventsLayer.innerHTML = "";
+    const earlyEndMin = getEarlyEndMin();
 
     const timedEvents = schedules.filter((ev) => {
       if (!ev.hasStartAt) return false;
-      if (prefs.earlyCollapsed && ev.visualEndMin <= EARLY_END_MIN) return false;
+      if (prefs.earlyCollapsed && ev.visualEndMin <= earlyEndMin) return false;
       return true;
     });
 
     const cols = computeEventColumns(timedEvents);
 
     for (const ev of timedEvents) {
-      const visualStart = prefs.earlyCollapsed ? Math.max(EARLY_END_MIN, ev.startMin) : ev.startMin;
+      const visualStart = prefs.earlyCollapsed ? Math.max(earlyEndMin, ev.startMin) : ev.startMin;
       const top = minToY(visualStart);
       const bottom = minToY(ev.visualEndMin);
       const height = Math.max(26, bottom - top);
@@ -1250,7 +1291,7 @@
     }
 
     const { startMin, endMin } = touchDraftSlot;
-    const visualStart = prefs.earlyCollapsed ? Math.max(EARLY_END_MIN, startMin) : startMin;
+    const visualStart = prefs.earlyCollapsed ? Math.max(getEarlyEndMin(), startMin) : startMin;
     const top = minToY(visualStart);
     const h = Math.max(30, minToY(endMin) - top);
 
@@ -1354,7 +1395,8 @@
         block.classList.add("is-dragging");
 
         const deltaMin = snap(dy / prefs.pxPerMin);
-        const minBound = prefs.earlyCollapsed ? EARLY_END_MIN : 0;
+        const earlyEndMin = getEarlyEndMin();
+        const minBound = prefs.earlyCollapsed ? earlyEndMin : 0;
 
         if (mode === "move") {
           previewStart = clamp(origStart + deltaMin, minBound, 1440 - origVisualDur);
@@ -1377,7 +1419,7 @@
           previewVisualEnd = ceiling;
         }
 
-        const visualStart = prefs.earlyCollapsed ? Math.max(EARLY_END_MIN, previewStart) : previewStart;
+        const visualStart = prefs.earlyCollapsed ? Math.max(earlyEndMin, previewStart) : previewStart;
         const top = minToY(visualStart);
         const height = Math.max(26, minToY(previewVisualEnd) - top);
         block.style.top = `${top}px`;
@@ -1489,10 +1531,10 @@
 
           const gridRect = el.timelineGrid.getBoundingClientRect();
           const y = tapStartY - gridRect.top;
-          const minBound = prefs.earlyCollapsed ? EARLY_END_MIN : 0;
-          const step = prefs.snapMin || 15;
-          const anchorMin = clamp(snap(yToMin(y)), minBound, 1440 - Math.max(30, step));
-          const endMin = Math.min(1440, anchorMin + Math.max(30, step));
+          const minBound = prefs.earlyCollapsed ? getEarlyEndMin() : 0;
+          const defaultSpan = getDefaultDurationMin();
+          const anchorMin = clamp(snap(yToMin(y)), minBound, 1440 - Math.max(15, defaultSpan));
+          const endMin = Math.min(1440, anchorMin + defaultSpan);
           touchDraftSlot = { startMin: anchorMin, endMin };
           renderTouchDraftSlot();
         };
@@ -1549,7 +1591,7 @@
 
         if (!dragged) {
           curStartMin = anchorMin;
-          curEndMin = Math.min(1440, anchorMin + 30);
+          curEndMin = Math.min(1440, anchorMin + getDefaultDurationMin());
         }
         openNewEventModal(curStartMin, curEndMin);
       };
@@ -1573,7 +1615,7 @@
       const origStart = touchDraftSlot.startMin;
       const origEnd = touchDraftSlot.endMin;
       const step = prefs.snapMin || 15;
-      const minBound = prefs.earlyCollapsed ? EARLY_END_MIN : 0;
+      const minBound = prefs.earlyCollapsed ? getEarlyEndMin() : 0;
 
       const cleanupDraft = () => {
         window.removeEventListener("pointermove", onDraftMove);
@@ -1622,9 +1664,9 @@
     el.timelineScroll.addEventListener("dragover", (e) => {
       if (!activeHtmlDragPayload) return;
       e.preventDefault();
-      const span = Math.max(15, activeHtmlDragPayload.durationMin || 30);
+      const span = Math.max(15, activeHtmlDragPayload.durationMin || getDefaultDurationMin());
       const y = e.clientY - el.timelineGrid.getBoundingClientRect().top;
-      const dropStart = clamp(snap(yToMin(y)), prefs.earlyCollapsed ? EARLY_END_MIN : 0, 1440 - span);
+      const dropStart = clamp(snap(yToMin(y)), prefs.earlyCollapsed ? getEarlyEndMin() : 0, 1440 - span);
       const dropEnd = dropStart + span;
       const top = minToY(dropStart);
       const h = Math.max(24, minToY(dropEnd) - top);
@@ -1658,9 +1700,9 @@
       if (!payload) return;
       activeHtmlDragPayload = null;
 
-      const span = Math.max(15, payload.durationMin || 30);
+      const span = Math.max(15, payload.durationMin || getDefaultDurationMin());
       const y = e.clientY - el.timelineGrid.getBoundingClientRect().top;
-      const dropStart = clamp(snap(yToMin(y)), prefs.earlyCollapsed ? EARLY_END_MIN : 0, 1440 - span);
+      const dropStart = clamp(snap(yToMin(y)), prefs.earlyCollapsed ? getEarlyEndMin() : 0, 1440 - span);
       const dropEnd = payload.durationMin > 0 ? Math.min(1440, dropStart + payload.durationMin) : null;
 
       try {
@@ -1714,8 +1756,8 @@
 
   async function startScheduleNow(ev) {
     if (!ev) return;
-    const nowMin = clamp(getNowKstMinutes(), prefs.earlyCollapsed ? EARLY_END_MIN : 0, 1425);
-    const dur = ev.hasEndAt && ev.endMin !== null ? Math.max(15, ev.endMin - ev.startMin) : 30;
+    const nowMin = clamp(getNowKstMinutes(), prefs.earlyCollapsed ? getEarlyEndMin() : 0, 1425);
+    const dur = ev.hasEndAt && ev.endMin !== null ? Math.max(15, ev.endMin - ev.startMin) : getDefaultDurationMin();
     const nextEnd = Math.min(1440, nowMin + dur);
     await commitScheduleTimeChange(ev, nowMin, nextEnd);
     showToast(`'${ev.title}' 일정을 지금 바로 시작합니다!`, "▶");
@@ -2047,7 +2089,7 @@
       el.editEnd.value = "";
     } else if (!el.editEnd.value && el.editStart.value) {
       const sMin = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? 540;
-      el.editEnd.value = minToTimeStr(Math.min(1439, sMin + 30));
+      el.editEnd.value = minToTimeStr(Math.min(1439, sMin + getDefaultDurationMin()));
     }
   }
 
@@ -2135,9 +2177,43 @@
     }
   }
 
-  function openApiSettingsModal() {
+  function checkBrowserNotifications() {
+    if (!prefs.browserNotify || !isViewingToday()) return;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+
+    const nowMin = getNowKstMinutes();
+    for (const ev of schedules) {
+      if (!ev || ev.done || !ev.hasStartAt) continue;
+      if (ev.startMin !== nowMin) continue;
+
+      const key = `${currentDate}:${ev.id}:${ev.startMin}`;
+      if (notifiedEventKeys.has(key)) continue;
+      notifiedEventKeys.add(key);
+
+      try {
+        const prefix = ev.type === "reminder" ? "🔔 알림" : "📅 시작";
+        new Notification(`${prefix}: ${ev.title}`, {
+          body: formatEventTimeLabel(ev),
+          tag: key
+        });
+      } catch {
+        // ignore browser notification failures
+      }
+    }
+  }
+
+  function openApiSettingsModal(scrollSectionEl = null) {
     updateSupabaseAuthUi();
+    renderPresetManager();
+    applyPrefsToUI();
     el.apiModal.classList.remove("hidden");
+    requestAnimationFrame(() => {
+      if (scrollSectionEl && typeof scrollSectionEl.scrollIntoView === "function") {
+        scrollSectionEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else if (el.settingsModalBody) {
+        el.settingsModalBody.scrollTop = 0;
+      }
+    });
   }
 
   /* -------------------- 이벤트 바인딩 -------------------- */
@@ -2151,22 +2227,44 @@
     el.nextDayBtn.addEventListener("click", () => loadDay(PlannerAPI.shiftDateStr(currentDate, 1)));
     el.todayBtn.addEventListener("click", () => loadDay(PlannerAPI.todayKst()));
 
-    el.snapSelect.addEventListener("change", (e) => {
+    el.snapSelect?.addEventListener("change", (e) => {
       prefs.snapMin = Number(e.target.value);
       PlannerAPI.savePrefs(prefs);
       showToast(`스냅 간격: ${prefs.snapMin}분`);
     });
 
-    el.zoomRange.addEventListener("input", (e) => {
+    el.zoomRange?.addEventListener("input", (e) => {
       prefs.pxPerMin = Number(e.target.value);
       PlannerAPI.savePrefs(prefs);
+      if (el.zoomValueLabel) {
+        el.zoomValueLabel.textContent = `${prefs.pxPerMin.toFixed(2)}x`;
+      }
       renderTimelineGrid();
       renderEvents();
       renderNowState();
     });
 
-    el.cascadeToggleBtn.addEventListener("click", () => {
-      prefs.cascadeMode = !prefs.cascadeMode;
+    el.defaultDurationSelect?.addEventListener("change", (e) => {
+      prefs.defaultDurationMin = Number(e.target.value);
+      PlannerAPI.savePrefs(prefs);
+      showToast(`새 일정 기본 길이: ${getDefaultDurationMin()}분`);
+    });
+
+    el.earlyEndHourSelect?.addEventListener("change", (e) => {
+      prefs.earlyEndHour = Number(e.target.value);
+      PlannerAPI.savePrefs(prefs);
+      renderAll();
+      showToast(`새벽 접기 기준: ${String(Math.round(getEarlyEndMin() / 60)).padStart(2, "0")}:00`);
+    });
+
+    el.earlyCollapsedCheck?.addEventListener("change", (e) => {
+      prefs.earlyCollapsed = e.target.checked;
+      PlannerAPI.savePrefs(prefs);
+      renderAll();
+    });
+
+    el.cascadeCheck?.addEventListener("change", (e) => {
+      prefs.cascadeMode = e.target.checked;
       PlannerAPI.savePrefs(prefs);
       applyPrefsToUI();
       showToast(prefs.cascadeMode ? "🔗 연쇄 밀기 켜짐" : "연쇄 밀기 꺼짐");
@@ -2178,11 +2276,95 @@
       renderAll();
     });
 
-    el.themeToggleBtn.addEventListener("click", () => {
-      prefs.theme = prefs.theme === "dark" ? "light" : "dark";
+    el.themeSelect?.addEventListener("change", (e) => {
+      prefs.theme = e.target.value === "light" ? "light" : "dark";
       PlannerAPI.savePrefs(prefs);
       applyPrefsToUI();
       showToast(prefs.theme === "light" ? "라이트 모드로 전환했습니다" : "다크 모드로 전환했습니다");
+    });
+
+    el.dimCompletedCheck?.addEventListener("change", (e) => {
+      prefs.dimCompleted = e.target.checked;
+      PlannerAPI.savePrefs(prefs);
+      applyPrefsToUI();
+      showToast(prefs.dimCompleted ? "완료 일정을 흐리게 표시합니다." : "완료 일정을 선명하게 표시합니다.");
+    });
+
+    el.browserNotifyCheck?.addEventListener("change", async (e) => {
+      if (!e.target.checked) {
+        prefs.browserNotify = false;
+        PlannerAPI.savePrefs(prefs);
+        showToast("브라우저 정각 알림을 껐습니다.");
+        return;
+      }
+
+      if (typeof Notification === "undefined") {
+        e.target.checked = false;
+        prefs.browserNotify = false;
+        PlannerAPI.savePrefs(prefs);
+        showToast("이 브라우저는 데스크톱 알림을 지원하지 않습니다.", "⚠️");
+        return;
+      }
+
+      if (Notification.permission === "granted") {
+        prefs.browserNotify = true;
+        PlannerAPI.savePrefs(prefs);
+        showToast("브라우저 정각 알림이 켜졌습니다.", "🔔");
+        return;
+      }
+
+      if (Notification.permission === "denied") {
+        e.target.checked = false;
+        prefs.browserNotify = false;
+        PlannerAPI.savePrefs(prefs);
+        showToast("브라우저 알림 권한이 차단되어 있습니다. 사이트 설정에서 허용해 주세요.", "⚠️");
+        return;
+      }
+
+      const result = await Notification.requestPermission();
+      if (result === "granted") {
+        prefs.browserNotify = true;
+        PlannerAPI.savePrefs(prefs);
+        applyPrefsToUI();
+        showToast("브라우저 정각 알림이 활성화되었습니다.", "🔔");
+      } else {
+        e.target.checked = false;
+        prefs.browserNotify = false;
+        PlannerAPI.savePrefs(prefs);
+        applyPrefsToUI();
+        showToast("알림 권한이 허용되지 않았습니다.", "⚠️");
+      }
+    });
+
+    el.settingsWidgetChecks?.querySelectorAll("input[data-widget]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        prefs.widgets[cb.dataset.widget] = cb.checked;
+        PlannerAPI.savePrefs(prefs);
+        applyPrefsToUI();
+      });
+    });
+
+    el.resetPresetsBtn?.addEventListener("click", () => {
+      prefs.presets = PlannerAPI.getDefaultPresets();
+      PlannerAPI.savePrefs(prefs);
+      renderPresetManager();
+      renderPresets();
+      showToast("빠른 블록 프리셋을 기본값으로 복원했습니다.", "⚡");
+    });
+
+    el.resetAllPrefsBtn?.addEventListener("click", () => {
+      if (
+        !window.confirm(
+          "테마, 스냅, 줌, 위젯, 프리셋 등 모든 로컬 설정을 기본값으로 되돌릴까요?\n(저장된 일정 데이터와 로그인 세션은 유지됩니다.)"
+        )
+      ) {
+        return;
+      }
+      prefs = PlannerAPI.resetPrefsToDefault();
+      renderPresetManager();
+      renderPresets();
+      renderAll();
+      showToast("모든 플래너 설정을 기본값으로 초기화했습니다.", "🔄");
     });
 
     el.undoBtn.addEventListener("click", () => {
@@ -2242,8 +2424,9 @@
     });
 
     el.addEventBtn.addEventListener("click", () => {
-      const next = findNextAvailableSlot(60);
-      openNewEventModal(next, Math.min(1440, next + 60));
+      const dur = getDefaultDurationMin();
+      const next = findNextAvailableSlot(dur);
+      openNewEventModal(next, Math.min(1440, next + dur));
     });
 
     // 좌측 시간 미정 추가
@@ -2295,23 +2478,11 @@
       el.memoSavedHint.textContent = `로컬 저장 (${minToTimeStr(getNowKstMinutes())})`;
     });
 
-    el.widgetConfigBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      el.widgetConfigMenu.classList.toggle("hidden");
-    });
-
-    el.widgetConfigMenu.querySelectorAll("input[data-widget]").forEach((cb) => {
-      cb.addEventListener("change", () => {
-        prefs.widgets[cb.dataset.widget] = cb.checked;
-        PlannerAPI.savePrefs(prefs);
-        applyPrefsToUI();
-      });
+    el.widgetConfigBtn?.addEventListener("click", () => {
+      openApiSettingsModal(el.settingsDisplaySection);
     });
 
     document.addEventListener("click", (e) => {
-      if (!e.target.closest("#widgetConfigMenu") && !e.target.closest("#widgetConfigBtn")) {
-        el.widgetConfigMenu.classList.add("hidden");
-      }
       if (!e.target.closest(".event-block") && selectedEventId) {
         selectedEventId = null;
         renderEvents();
@@ -2421,10 +2592,9 @@
       await deleteScheduleById(id);
     });
 
-    // 프리셋 모달
-    el.editPresetsBtn.addEventListener("click", () => {
-      renderPresetManager();
-      el.presetModal.classList.remove("hidden");
+    // 빠른 블록 프리셋 편집 & 통합 설정 모달 열기
+    el.editPresetsBtn?.addEventListener("click", () => {
+      openApiSettingsModal(el.settingsPresetSection);
     });
 
     el.addPresetForm.addEventListener("submit", (e) => {
@@ -2444,8 +2614,9 @@
       renderPresets();
     });
 
-    // 계정 관리 모달
-    el.openApiModalBtn.addEventListener("click", openApiSettingsModal);
+    // 통합 설정 & 계정 모달
+    el.openSettingsBtn?.addEventListener("click", () => openApiSettingsModal());
+    el.openApiModalBtn?.addEventListener("click", () => openApiSettingsModal(el.settingsAccountSection));
 
     async function performSupabaseLogin() {
       const email = el.sbLoginEmail.value.trim();
@@ -2611,6 +2782,7 @@
       renderEvents();
     }
     renderNowState();
+    checkBrowserNotifications();
 
     const now = Date.now();
     const pollInterval = realtimeConnected ? 15000 : 5000;
