@@ -3214,11 +3214,13 @@
       btn.addEventListener("click", () => {
         const kind = btn.dataset.dayPreset;
         const target =
-          kind === "weekdays"
-            ? [1, 2, 3, 4, 5]
-            : kind === "weekend"
-              ? [0, 6]
-              : [0, 1, 2, 3, 4, 5, 6];
+          kind === "none"
+            ? []
+            : kind === "weekdays"
+              ? [1, 2, 3, 4, 5]
+              : kind === "weekend"
+                ? [0, 6]
+                : [0, 1, 2, 3, 4, 5, 6];
         el.routineWeekdayBar.querySelectorAll('.routine-weekday-chips input[type="checkbox"]').forEach((cb) => {
           cb.checked = target.includes(Number(cb.value));
         });
