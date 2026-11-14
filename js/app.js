@@ -14,10 +14,15 @@
   let selectedEventId = null;
   let activeTypeFilter = "all";
   let activeHtmlDragPayload = null;
+  let activePointerDrag = false;
   let toastTimer = null;
+  let islandNotifyTimer = null;
   let lastNowRenderMin = -1;
   let isBackgroundSyncing = false;
   let lastSyncCheckAt = 0;
+  let lastUserMutationAt = 0;
+  let loadRequestToken = 0;
+  let undoStack = [];
 
   const el = {
     datePicker: document.getElementById("datePicker"),
@@ -26,16 +31,31 @@
     todayBtn: document.getElementById("todayBtn"),
     nowBanner: document.getElementById("nowBanner"),
     nowBannerLabel: document.getElementById("nowBannerLabel"),
+    islandRingFg: document.getElementById("islandRingFg"),
+    islandLiveToast: document.getElementById("islandLiveToast"),
+    islandLiveIcon: document.getElementById("islandLiveIcon"),
+    islandLiveText: document.getElementById("islandLiveText"),
+    islandExpanded: document.getElementById("islandExpanded"),
+    islandTypeBadge: document.getElementById("islandTypeBadge"),
     nowEventTitle: document.getElementById("nowEventTitle"),
     nowEventTime: document.getElementById("nowEventTime"),
+    islandElapsedText: document.getElementById("islandElapsedText"),
     nowProgressBar: document.getElementById("nowProgressBar"),
     nowRemaining: document.getElementById("nowRemaining"),
+    islandMemoPreview: document.getElementById("islandMemoPreview"),
+    nowMinusBtn: document.getElementById("nowMinusBtn"),
     nowExtendBtn: document.getElementById("nowExtendBtn"),
+    nowPlus30Btn: document.getElementById("nowPlus30Btn"),
+    nowStartNowBtn: document.getElementById("nowStartNowBtn"),
+    nowJumpBtn: document.getElementById("nowJumpBtn"),
     nowDoneBtn: document.getElementById("nowDoneBtn"),
+    islandNextInfo: document.getElementById("islandNextInfo"),
+    islandReminderInfo: document.getElementById("islandReminderInfo"),
     snapSelect: document.getElementById("snapSelect"),
     zoomRange: document.getElementById("zoomRange"),
     cascadeToggleBtn: document.getElementById("cascadeToggleBtn"),
     themeToggleBtn: document.getElementById("themeToggleBtn"),
+    undoBtn: document.getElementById("undoBtn"),
     syncNowBtn: document.getElementById("syncNowBtn"),
     openApiModalBtn: document.getElementById("openApiModalBtn"),
     apiSourceDot: document.getElementById("apiSourceDot"),
@@ -118,11 +138,53 @@
 
   /* -------------------- 유틸 -------------------- */
 
-  function showToast(msg) {
+  function showToast(msg, icon = "✨") {
     el.toast.textContent = msg;
     el.toast.classList.remove("hidden");
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.toast.classList.add("hidden"), 2800);
+
+    if (el.islandLiveToast && el.nowBanner) {
+      el.islandLiveIcon.textContent = icon;
+      el.islandLiveText.textContent = msg;
+      el.islandLiveToast.classList.remove("hidden");
+      el.nowBanner.classList.add("is-notify");
+      clearTimeout(islandNotifyTimer);
+      islandNotifyTimer = setTimeout(() => {
+        el.nowBanner.classList.remove("is-notify");
+        el.islandLiveToast.classList.add("hidden");
+      }, 2400);
+    }
+  }
+
+  function updateUndoButton() {
+    if (!el.undoBtn) return;
+    el.undoBtn.disabled = undoStack.length === 0;
+    el.undoBtn.title = undoStack.length
+      ? `실행 취소 (Ctrl+Z): ${undoStack[undoStack.length - 1].label}`
+      : "실행 취소 (Ctrl+Z)";
+  }
+
+  function pushUndoAction(label, undoFn) {
+    undoStack.push({ label, undo: undoFn });
+    if (undoStack.length > 20) undoStack.shift();
+    updateUndoButton();
+  }
+
+  async function undoLastAction() {
+    const entry = undoStack.pop();
+    updateUndoButton();
+    if (!entry) {
+      showToast("되돌릴 작업이 없습니다.", "↩️");
+      return;
+    }
+    try {
+      lastUserMutationAt = Date.now();
+      await entry.undo();
+      showToast(`실행 취소: ${entry.label}`, "↩️");
+    } catch (err) {
+      showToast(`실행 취소 실패: ${err.message}`, "⚠️");
+    }
   }
 
   function clamp(val, min, max) {
@@ -280,6 +342,7 @@
   /* -------------------- API 호출 래퍼 -------------------- */
 
   async function loadDay(dateStr, scrollOptimal = true) {
+    const reqToken = ++loadRequestToken;
     currentDate = dateStr;
     el.datePicker.value = dateStr;
     selectedEventId = null;
@@ -287,16 +350,33 @@
 
     widgetsState = PlannerAPI.loadWidgetsState(dateStr);
 
-    try {
-      schedules = await PlannerAPI.fetchSchedules(dateStr);
-    } catch (err) {
-      schedules = [];
-      showToast(err.message);
+    const settings = PlannerAPI.getSettings();
+    const cached = settings.mode === "agent" ? PlannerAPI.getCachedSchedules(dateStr) : null;
+    if (cached) {
+      schedules = cached;
+      renderAll();
+      if (scrollOptimal) {
+        scrollToOptimalPosition();
+      }
     }
 
-    renderAll();
-    if (scrollOptimal) {
-      scrollToOptimalPosition();
+    try {
+      const fresh = await PlannerAPI.fetchSchedules(dateStr);
+      if (reqToken !== loadRequestToken || dateStr !== currentDate) return;
+      schedules = fresh;
+      renderAll();
+      if (!cached && scrollOptimal) {
+        scrollToOptimalPosition();
+      }
+    } catch (err) {
+      if (reqToken !== loadRequestToken || dateStr !== currentDate) return;
+      if (cached) {
+        showToast(`캐시된 일정 표시 중 (${err.message})`, "📡");
+      } else {
+        schedules = [];
+        renderAll();
+        showToast(err.message, "⚠️");
+      }
     }
   }
 
@@ -307,7 +387,8 @@
   }
 
   function isAutoSyncPaused() {
-    if (document.hidden || isBackgroundSyncing || activeHtmlDragPayload) return true;
+    if (document.hidden || isBackgroundSyncing || activeHtmlDragPayload || activePointerDrag) return true;
+    if (Date.now() - lastUserMutationAt < 2500) return true;
     if (document.querySelector(".modal-backdrop:not(.hidden)")) return true;
     const s = PlannerAPI.getSettings();
     if (s.mode === "agent" && (!s.agentApiUrl || !s.agentApiToken)) return true;
@@ -331,7 +412,7 @@
         schedules = fresh;
         renderAll();
         if (showNotify) {
-          showToast("일정 변경사항이 자동 반영되었습니다.");
+          showToast("일정 변경사항이 자동 반영되었습니다.", "🔄");
         }
       }
     } catch {
@@ -354,58 +435,137 @@
     el.timelineScroll.scrollTop = Math.max(0, minToY(targetMin) - 18);
   }
 
-  async function toggleScheduleDone(id, checked) {
+  function syncSwrCacheIfCurrent(dateStr, list) {
+    if (PlannerAPI.getSettings().mode === "agent") {
+      PlannerAPI.setCachedSchedules(dateStr, list);
+    }
+  }
+
+  async function createScheduleAndRecord(payload, toastMsg) {
+    lastUserMutationAt = Date.now();
+    const created = await PlannerAPI.createSchedule(payload);
+    if (created.date === currentDate) {
+      schedules = PlannerAPI.sortSchedules([...schedules.filter((s) => s.id !== created.id), created]);
+      syncSwrCacheIfCurrent(currentDate, schedules);
+      renderAll();
+    } else {
+      await loadDay(created.date, false);
+    }
+
+    pushUndoAction(`'${created.title}' 등록`, async () => {
+      await deleteScheduleById(created.id, { recordUndo: false, targetDate: created.date });
+    });
+
+    if (toastMsg) {
+      showToast(toastMsg, "✅");
+    }
+    return created;
+  }
+
+  async function toggleScheduleDone(id, checked, options = {}) {
+    const { recordUndo = true } = options;
     const idx = schedules.findIndex((s) => s.id === id);
     if (idx === -1) return;
     const prev = { ...schedules[idx] };
+    lastUserMutationAt = Date.now();
     schedules[idx] = {
       ...prev,
       done: checked,
-      done_at: checked ? new Date().toISOString() : null
+      done_at: checked ? new Date().toISOString() : null,
+      updated_at: new Date().toISOString()
     };
+    syncSwrCacheIfCurrent(currentDate, schedules);
     renderAll();
+
+    if (recordUndo) {
+      pushUndoAction(`'${prev.title}' 완료 상태`, async () => {
+        await toggleScheduleDone(id, prev.done, { recordUndo: false });
+      });
+    }
 
     try {
       const updated = await PlannerAPI.patchSchedule(id, { done: checked }, currentDate);
       const curIdx = schedules.findIndex((s) => s.id === id);
       if (curIdx !== -1 && updated) {
         schedules[curIdx] = updated;
+        syncSwrCacheIfCurrent(currentDate, schedules);
         renderAll();
+      }
+      if (recordUndo) {
+        showToast(checked ? `'${prev.title}' 완료!` : `'${prev.title}' 완료 해제`, checked ? "✅" : "↩️");
       }
     } catch (err) {
       const curIdx = schedules.findIndex((s) => s.id === id);
       if (curIdx !== -1) schedules[curIdx] = prev;
+      syncSwrCacheIfCurrent(currentDate, schedules);
       renderAll();
-      showToast(`완료 저장 실패: ${err.message}`);
+      showToast(`완료 저장 실패: ${err.message}`, "⚠️");
     }
   }
 
-  async function deleteScheduleById(id) {
+  async function deleteScheduleById(id, options = {}) {
+    const { recordUndo = true, targetDate = currentDate } = options;
+    const removed = schedules.find((s) => s.id === id);
     const prevList = [...schedules];
+    lastUserMutationAt = Date.now();
     schedules = schedules.filter((s) => s.id !== id);
     if (selectedEventId === id) selectedEventId = null;
+    syncSwrCacheIfCurrent(currentDate, schedules);
     renderAll();
 
     try {
-      await PlannerAPI.deleteSchedule(id, currentDate);
-      showToast("일정을 삭제했습니다.");
+      await PlannerAPI.deleteSchedule(id, targetDate);
+      if (recordUndo && removed) {
+        const snapshot = { ...removed };
+        pushUndoAction(`'${snapshot.title}' 삭제`, async () => {
+          const recreated = await PlannerAPI.createSchedule({
+            date: snapshot.date,
+            start_at: snapshot.start_at,
+            end_at: snapshot.end_at,
+            title: snapshot.title,
+            type: snapshot.type,
+            source: snapshot.source,
+            memo: snapshot.memo || ""
+          });
+          const finalRec = snapshot.done
+            ? await PlannerAPI.patchSchedule(recreated.id, { done: true }, snapshot.date)
+            : recreated;
+          if (finalRec.date === currentDate) {
+            schedules = PlannerAPI.sortSchedules([...schedules, finalRec]);
+            syncSwrCacheIfCurrent(currentDate, schedules);
+            renderAll();
+          } else {
+            await loadDay(finalRec.date, false);
+          }
+        });
+        showToast("일정을 삭제했습니다.", "🗑️");
+      }
     } catch (err) {
       schedules = prevList;
+      syncSwrCacheIfCurrent(currentDate, schedules);
       renderAll();
-      showToast(`삭제 실패: ${err.message}`);
+      showToast(`삭제 실패: ${err.message}`, "⚠️");
     }
   }
 
-  async function commitScheduleTimeChange(ev, nextStartMin, nextEndMinOrNull) {
-    const oldStartIso = ev.start_at;
-    const oldEndIso = ev.end_at;
-    const nextStartIso = PlannerAPI.kstMinutesToIso(ev.date, nextStartMin);
-    const nextEndIso =
-      nextEndMinOrNull !== null ? PlannerAPI.kstMinutesToIso(ev.date, nextEndMinOrNull) : null;
+  async function commitScheduleTimeChange(ev, nextStartMin, nextEndMinOrNull, options = {}) {
+    const { recordUndo = true, customStartIso, customEndIso } = options;
+    const prevSchedulesSnapshot = schedules.map((s) => ({ ...s }));
+    const affectedSnapshots = [{ id: ev.id, date: ev.date, start_at: ev.start_at, end_at: ev.end_at }];
+
+    const hasCustomStart = customStartIso !== undefined;
+    const nextStartIso = hasCustomStart
+      ? customStartIso
+      : PlannerAPI.kstMinutesToIso(ev.date, nextStartMin);
+    const nextEndIso = hasCustomStart
+      ? customEndIso ?? null
+      : nextEndMinOrNull !== null
+        ? PlannerAPI.kstMinutesToIso(ev.date, nextEndMinOrNull)
+        : null;
 
     // 연쇄 밀기 대상 계산
     const cascadePatches = [];
-    if (prefs.cascadeMode) {
+    if (prefs.cascadeMode && nextStartMin !== null && !hasCustomStart) {
       const movedAnchorVisualEnd =
         nextEndMinOrNull !== null ? nextEndMinOrNull : Math.min(1440, nextStartMin + 30);
       let cursor = movedAnchorVisualEnd;
@@ -418,8 +578,15 @@
           const itemSpan = item.hasEndAt ? item.endMin - item.startMin : null;
           const nextItemStart = clamp(cursor, 0, itemSpan ? 1440 - itemSpan : 1425);
           const nextItemEnd = itemSpan !== null ? nextItemStart + itemSpan : null;
+          affectedSnapshots.push({
+            id: item.id,
+            date: item.date,
+            start_at: item.start_at,
+            end_at: item.end_at
+          });
           cascadePatches.push({
             id: item.id,
+            date: item.date,
             patch: {
               start_at: PlannerAPI.kstMinutesToIso(item.date, nextItemStart),
               end_at:
@@ -434,25 +601,72 @@
       }
     }
 
-    try {
-      const updated = await PlannerAPI.patchSchedule(
-        ev.id,
-        { start_at: nextStartIso, end_at: nextEndIso },
-        currentDate
-      );
-      if (cascadePatches.length > 0) {
-        await Promise.all(
-          cascadePatches.map((cp) => PlannerAPI.patchSchedule(cp.id, cp.patch, currentDate))
+    // 0ms Optimistic 즉시 반영
+    const nowIso = new Date().toISOString();
+    const patchMap = new Map([[ev.id, { start_at: nextStartIso, end_at: nextEndIso }]]);
+    for (const cp of cascadePatches) {
+      patchMap.set(cp.id, cp.patch);
+    }
+
+    lastUserMutationAt = Date.now();
+    schedules = PlannerAPI.sortSchedules(
+      schedules.map((item) => {
+        const p = patchMap.get(item.id);
+        if (!p) return item;
+        return PlannerAPI.normalizeScheduleRecord(
+          { ...item, start_at: p.start_at, end_at: p.end_at, updated_at: nowIso },
+          item.date
         );
-      }
-      schedules = await PlannerAPI.fetchSchedules(currentDate);
+      })
+    );
+    syncSwrCacheIfCurrent(currentDate, schedules);
+    renderAll();
+
+    if (recordUndo) {
+      pushUndoAction(`'${ev.title}' 시간 변경`, async () => {
+        const undoMap = new Map(affectedSnapshots.map((snapItem) => [snapItem.id, snapItem]));
+        schedules = PlannerAPI.sortSchedules(
+          schedules.map((item) => {
+            const snapItem = undoMap.get(item.id);
+            if (!snapItem) return item;
+            return PlannerAPI.normalizeScheduleRecord(
+              { ...item, start_at: snapItem.start_at, end_at: snapItem.end_at, updated_at: new Date().toISOString() },
+              item.date
+            );
+          })
+        );
+        syncSwrCacheIfCurrent(currentDate, schedules);
+        renderAll();
+        const restored = await Promise.all(
+          affectedSnapshots.map((snapItem) =>
+            PlannerAPI.patchSchedule(
+              snapItem.id,
+              { start_at: snapItem.start_at, end_at: snapItem.end_at },
+              snapItem.date
+            )
+          )
+        );
+        const restoredMap = new Map(restored.filter(Boolean).map((r) => [r.id, r]));
+        schedules = PlannerAPI.sortSchedules(schedules.map((item) => restoredMap.get(item.id) || item));
+        syncSwrCacheIfCurrent(currentDate, schedules);
+        renderAll();
+      });
+    }
+
+    try {
+      const patchResults = await Promise.all([
+        PlannerAPI.patchSchedule(ev.id, { start_at: nextStartIso, end_at: nextEndIso }, currentDate),
+        ...cascadePatches.map((cp) => PlannerAPI.patchSchedule(cp.id, cp.patch, currentDate))
+      ]);
+      const resultMap = new Map(patchResults.filter(Boolean).map((r) => [r.id, r]));
+      schedules = PlannerAPI.sortSchedules(schedules.map((item) => resultMap.get(item.id) || item));
+      syncSwrCacheIfCurrent(currentDate, schedules);
       renderAll();
-      if (!updated) throw new Error("업데이트 응답이 비어 있습니다.");
     } catch (err) {
-      ev.start_at = oldStartIso;
-      ev.end_at = oldEndIso;
-      await loadDay(currentDate, false);
-      showToast(`시간 수정 실패: ${err.message}`);
+      schedules = prevSchedulesSnapshot;
+      syncSwrCacheIfCurrent(currentDate, schedules);
+      renderAll();
+      showToast(`시간 수정 실패: ${err.message}`, "⚠️");
     }
   }
 
@@ -519,20 +733,20 @@
         const startMin = findNextAvailableSlot(p.durationMin || 30);
         const endMin = p.durationMin > 0 ? Math.min(1440, startMin + p.durationMin) : null;
         try {
-          await PlannerAPI.createSchedule({
-            date: currentDate,
-            start_at: PlannerAPI.kstMinutesToIso(currentDate, startMin),
-            end_at: endMin !== null ? PlannerAPI.kstMinutesToIso(currentDate, endMin) : null,
-            title: `${p.icon} ${p.title}`,
-            type: p.type || "schedule",
-            source: "app",
-            memo: ""
-          });
-          schedules = await PlannerAPI.fetchSchedules(currentDate);
-          renderAll();
-          showToast(`${minToTimeStr(startMin)}에 '${p.title}' 일정을 등록했습니다.`);
+          await createScheduleAndRecord(
+            {
+              date: currentDate,
+              start_at: PlannerAPI.kstMinutesToIso(currentDate, startMin),
+              end_at: endMin !== null ? PlannerAPI.kstMinutesToIso(currentDate, endMin) : null,
+              title: `${p.icon} ${p.title}`,
+              type: p.type || "schedule",
+              source: "app",
+              memo: ""
+            },
+            `${minToTimeStr(startMin)}에 '${p.title}' 일정을 등록했습니다.`
+          );
         } catch (err) {
-          showToast(`등록 실패: ${err.message}`);
+          showToast(`등록 실패: ${err.message}`, "⚠️");
         }
       });
 
@@ -814,6 +1028,10 @@
       const baseEnd = ev.hasEndAt && ev.endMin !== null ? ev.endMin : ev.startMin + 15;
       const nextEnd = Math.min(1440, baseEnd + 15);
       await commitScheduleTimeChange(ev, ev.startMin, nextEnd);
+    } else if (action === "plus30") {
+      const baseEnd = ev.hasEndAt && ev.endMin !== null ? ev.endMin : ev.startMin + 15;
+      const nextEnd = Math.min(1440, baseEnd + 30);
+      await commitScheduleTimeChange(ev, ev.startMin, nextEnd);
     }
   }
 
@@ -827,6 +1045,7 @@
       if (downEvent.button !== 0) return;
       if (downEvent.target.closest("input, button")) return;
       downEvent.stopPropagation();
+      activePointerDrag = true;
 
       selectedEventId = ev.id;
       const startClientY = downEvent.clientY;
@@ -887,6 +1106,7 @@
       };
 
       const onUp = async () => {
+        activePointerDrag = false;
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         block.classList.remove("is-dragging");
@@ -898,15 +1118,11 @@
         }
 
         if (droppingToDock) {
-          try {
-            await PlannerAPI.patchSchedule(ev.id, { start_at: null, end_at: null }, currentDate);
-            schedules = await PlannerAPI.fetchSchedules(currentDate);
-            renderAll();
-            showToast("시간 미정 목록으로 옮겼습니다.");
-          } catch (err) {
-            renderAll();
-            showToast(`이동 실패: ${err.message}`);
-          }
+          await commitScheduleTimeChange(ev, null, null, {
+            customStartIso: null,
+            customEndIso: null
+          });
+          showToast("시간 미정 목록으로 옮겼습니다.", "📥");
           return;
         }
 
@@ -1036,20 +1252,20 @@
           const item = schedules.find((s) => s.id === payload.id);
           if (item) await commitScheduleTimeChange(item, dropStart, dropEnd);
         } else if (payload.kind === "youtube") {
-          await PlannerAPI.createSchedule({
-            date: currentDate,
-            start_at: PlannerAPI.kstMinutesToIso(currentDate, dropStart),
-            end_at: PlannerAPI.kstMinutesToIso(currentDate, Math.min(1440, dropStart + (payload.durationMin || 30))),
-            title: payload.title,
-            type: "schedule",
-            source: "app",
-            memo: payload.url || ""
-          });
-          schedules = await PlannerAPI.fetchSchedules(currentDate);
-          renderAll();
-          showToast(`${minToTimeStr(dropStart)}에 유튜브 시청 일정을 등록했습니다.`);
+          await createScheduleAndRecord(
+            {
+              date: currentDate,
+              start_at: PlannerAPI.kstMinutesToIso(currentDate, dropStart),
+              end_at: PlannerAPI.kstMinutesToIso(currentDate, Math.min(1440, dropStart + (payload.durationMin || 30))),
+              title: payload.title,
+              type: "schedule",
+              source: "app",
+              memo: payload.url || ""
+            },
+            `${minToTimeStr(dropStart)}에 유튜브 시청 일정을 등록했습니다.`
+          );
         } else if (payload.kind === "preset") {
-          await PlannerAPI.createSchedule({
+          await createScheduleAndRecord({
             date: currentDate,
             start_at: PlannerAPI.kstMinutesToIso(currentDate, dropStart),
             end_at: dropEnd !== null ? PlannerAPI.kstMinutesToIso(currentDate, dropEnd) : null,
@@ -1058,8 +1274,6 @@
             source: "app",
             memo: ""
           });
-          schedules = await PlannerAPI.fetchSchedules(currentDate);
-          renderAll();
         }
       } catch (err) {
         showToast(`배치 실패: ${err.message}`);
@@ -1067,7 +1281,46 @@
     });
   }
 
-  /* -------------------- 현재 시각 NOW Line & 배너 -------------------- */
+  /* -------------------- 현재 시각 NOW Line & Dynamic Island -------------------- */
+
+  const ISLAND_RING_CIRCUMFERENCE = 2 * Math.PI * 7.5;
+
+  function jumpToSchedule(ev) {
+    if (!ev || !ev.hasStartAt) {
+      scrollToOptimalPosition();
+      return;
+    }
+    selectedEventId = ev.id;
+    renderEvents();
+    const y = Math.max(0, minToY(ev.startMin) - 80);
+    el.timelineScroll.scrollTo({ top: y, behavior: "smooth" });
+  }
+
+  async function startScheduleNow(ev) {
+    if (!ev) return;
+    const nowMin = clamp(getNowKstMinutes(), prefs.earlyCollapsed ? EARLY_END_MIN : 0, 1425);
+    const dur = ev.hasEndAt && ev.endMin !== null ? Math.max(15, ev.endMin - ev.startMin) : 30;
+    const nextEnd = Math.min(1440, nowMin + dur);
+    await commitScheduleTimeChange(ev, nowMin, nextEnd);
+    showToast(`'${ev.title}' 일정을 지금 바로 시작합니다!`, "▶");
+  }
+
+  function updateIslandRing(pct, strokeColor) {
+    if (!el.islandRingFg) return;
+    const clamped = clamp(pct, 0, 100);
+    el.islandRingFg.style.stroke = strokeColor;
+    el.islandRingFg.style.strokeDashoffset = String(ISLAND_RING_CIRCUMFERENCE * (1 - clamped / 100));
+  }
+
+  function alignDynamicIsland() {
+    if (!el.nowBanner || !el.islandExpanded) return;
+    const bannerRect = el.nowBanner.getBoundingClientRect();
+    const panelW = Math.min(420, window.innerWidth - 24);
+    const desiredLeft = bannerRect.left + bannerRect.width / 2 - panelW / 2;
+    const clampedLeft = clamp(desiredLeft, 12, Math.max(12, window.innerWidth - panelW - 12));
+    const offsetPx = clampedLeft - desiredLeft;
+    el.nowBanner.style.setProperty("--island-offset-x", `${Math.round(offsetPx)}px`);
+  }
 
   function renderNowState() {
     const nowMin = getNowKstMinutes();
@@ -1090,6 +1343,14 @@
         })
       : null;
 
+    const nextEv = isToday
+      ? schedules
+          .filter((e) => e.hasStartAt && !e.done && e.startMin > nowMin)
+          .sort((a, b) => a.startMin - b.startMin)[0]
+      : null;
+
+    const focusEv = activeEv || nextEv;
+
     if (activeEv) {
       const activeEnd = activeEv.hasEndAt && activeEv.endMin !== null ? activeEv.endMin : activeEv.startMin + 30;
       const total = Math.max(1, activeEnd - activeEv.startMin);
@@ -1100,42 +1361,122 @@
       el.nowBanner.classList.add("is-active");
       el.nowBannerLabel.textContent = activeEv.type === "reminder" ? "ALERT" : "NOW";
       el.nowEventTitle.textContent = activeEv.title;
+      el.nowRemaining.textContent = `${remain}분 남음`;
+      updateIslandRing(pct, activeEv.type === "reminder" ? "#f59e0b" : "#ef4444");
+
+      el.islandTypeBadge.textContent = TYPE_META[activeEv.type]?.badge || "일정";
       el.nowEventTime.textContent = activeEv.hasEndAt
         ? `${minToTimeStr(activeEv.startMin)} ~ ${minToTimeStr(activeEv.endMin)}`
         : `${minToTimeStr(activeEv.startMin)} 시작`;
+      el.islandElapsedText.textContent = `${pct}% 진행 · ${elapsed}분 경과`;
       el.nowProgressBar.style.width = `${pct}%`;
-      el.nowRemaining.textContent = `${remain}분 남음`;
-      el.nowExtendBtn.classList.toggle("hidden", !activeEv.hasEndAt);
+
+      el.nowMinusBtn.classList.remove("hidden");
+      el.nowMinusBtn.disabled = activeEv.hasEndAt ? activeEv.endMin - activeEv.startMin <= 15 : true;
+      el.nowExtendBtn.classList.remove("hidden");
+      el.nowPlus30Btn.classList.remove("hidden");
+      el.nowStartNowBtn.classList.add("hidden");
       el.nowDoneBtn.classList.remove("hidden");
 
-      el.nowExtendBtn.onclick = () => handleQuickAction(activeEv.id, "plus15");
-      el.nowDoneBtn.onclick = () => toggleScheduleDone(activeEv.id, true);
-    } else {
+      el.nowMinusBtn.onclick = (e) => { e.stopPropagation(); handleQuickAction(activeEv.id, "minus15"); };
+      el.nowExtendBtn.onclick = (e) => { e.stopPropagation(); handleQuickAction(activeEv.id, "plus15"); };
+      el.nowPlus30Btn.onclick = (e) => { e.stopPropagation(); handleQuickAction(activeEv.id, "plus30"); };
+      el.nowJumpBtn.onclick = (e) => { e.stopPropagation(); jumpToSchedule(activeEv); };
+      el.nowDoneBtn.onclick = (e) => { e.stopPropagation(); toggleScheduleDone(activeEv.id, true); };
+    } else if (nextEv) {
+      const minsLeft = Math.max(1, nextEv.startMin - nowMin);
+      const prepPct = clamp(Math.round(((60 - Math.min(60, minsLeft)) / 60) * 100), 8, 95);
+
       el.nowBanner.classList.remove("is-active");
-      el.nowProgressBar.style.width = "0%";
+      el.nowBannerLabel.textContent = nextEv.type === "reminder" ? "NEXT 🔔" : "NEXT";
+      el.nowEventTitle.textContent = nextEv.title;
+      el.nowRemaining.textContent = `${minsLeft}분 뒤`;
+      updateIslandRing(prepPct, nextEv.type === "reminder" ? "#f59e0b" : "#6366f1");
+
+      el.islandTypeBadge.textContent = TYPE_META[nextEv.type]?.badge || "예정";
+      el.nowEventTime.textContent = nextEv.hasEndAt
+        ? `${minToTimeStr(nextEv.startMin)} ~ ${minToTimeStr(nextEv.endMin)}`
+        : `${minToTimeStr(nextEv.startMin)} 예정`;
+      el.islandElapsedText.textContent = `시작 ${minsLeft}분 전`;
+      el.nowProgressBar.style.width = `${prepPct}%`;
+
+      el.nowMinusBtn.classList.add("hidden");
       el.nowExtendBtn.classList.add("hidden");
+      el.nowPlus30Btn.classList.add("hidden");
       el.nowDoneBtn.classList.add("hidden");
+      el.nowStartNowBtn.classList.remove("hidden");
 
-      const nextEv = isToday
-        ? schedules
-            .filter((e) => e.hasStartAt && !e.done && e.startMin > nowMin)
-            .sort((a, b) => a.startMin - b.startMin)[0]
-        : null;
+      el.nowStartNowBtn.onclick = (e) => { e.stopPropagation(); startScheduleNow(nextEv); };
+      el.nowJumpBtn.onclick = (e) => { e.stopPropagation(); jumpToSchedule(nextEv); };
+    } else {
+      const doneCnt = schedules.filter((e) => e.done).length;
+      const donePct = schedules.length ? Math.round((doneCnt / schedules.length) * 100) : 100;
 
-      if (nextEv) {
-        el.nowBannerLabel.textContent = nextEv.type === "reminder" ? "NEXT 🔔" : "NEXT";
-        el.nowEventTitle.textContent = nextEv.title;
-        el.nowEventTime.textContent = `${minToTimeStr(nextEv.startMin)} 예정`;
-        el.nowRemaining.textContent = `${nextEv.startMin - nowMin}분 뒤`;
-      } else {
-        el.nowBannerLabel.textContent = isToday ? "FREE" : currentDate;
-        el.nowEventTitle.textContent = isToday
-          ? "현재 시간에 진행 중인 일정이 없습니다"
-          : `${currentDate} 일정을 보고 있습니다`;
-        el.nowEventTime.textContent = "타임라인을 클릭하거나 '+ 새 일정'으로 추가하세요";
-        el.nowRemaining.textContent = "";
-      }
+      el.nowBanner.classList.remove("is-active");
+      el.nowBannerLabel.textContent = isToday ? "FREE" : currentDate;
+      el.nowEventTitle.textContent = isToday ? "진행 중인 일정이 없습니다" : `${currentDate} 일정 보기`;
+      el.nowRemaining.textContent = isToday ? "여유 시간" : `${schedules.length}건`;
+      updateIslandRing(donePct, "#10b981");
+
+      el.islandTypeBadge.textContent = isToday ? "대기" : currentDate;
+      el.nowEventTime.textContent = "타임라인을 클릭하거나 '+ 새 일정' 추가";
+      el.islandElapsedText.textContent = `완료 ${doneCnt}/${schedules.length}`;
+      el.nowProgressBar.style.width = `${donePct}%`;
+
+      el.nowMinusBtn.classList.add("hidden");
+      el.nowExtendBtn.classList.add("hidden");
+      el.nowPlus30Btn.classList.add("hidden");
+      el.nowStartNowBtn.classList.add("hidden");
+      el.nowDoneBtn.classList.add("hidden");
+      el.nowJumpBtn.onclick = (e) => { e.stopPropagation(); scrollToOptimalPosition(); };
     }
+
+    const memoText = focusEv?.memo?.trim() || "";
+    if (memoText) {
+      el.islandMemoPreview.textContent = memoText;
+      el.islandMemoPreview.classList.remove("hidden");
+    } else {
+      el.islandMemoPreview.classList.add("hidden");
+    }
+
+    // 다음 일정 & 남은 알림 하단 스트립
+    const upNextEv = activeEv
+      ? schedules
+          .filter((e) => e.hasStartAt && !e.done && e.id !== activeEv.id && e.startMin >= activeEv.startMin)
+          .sort((a, b) => a.startMin - b.startMin)[0]
+      : nextEv;
+
+    if (activeEv && upNextEv) {
+      el.islandNextInfo.innerHTML = `<span>다음 · <strong>${escapeHtml(upNextEv.title)}</strong></span><span>${minToTimeStr(upNextEv.startMin)}</span>`;
+    } else if (!activeEv && nextEv) {
+      const remainCnt = schedules.filter((e) => !e.done).length;
+      el.islandNextInfo.innerHTML = `<span>오늘 남은 미완료 일정</span><span>${remainCnt}건</span>`;
+    } else {
+      el.islandNextInfo.innerHTML = `<span>이후 예정된 일정 없음</span><span>${schedules.length}건 중 ${schedules.filter((e) => e.done).length}건 완료</span>`;
+    }
+
+    const remEv =
+      schedules.find(
+        (e) =>
+          e.type === "reminder" &&
+          !e.done &&
+          e.id !== activeEv?.id &&
+          (!isToday || !e.hasStartAt || e.startMin >= nowMin)
+      ) || schedules.find((e) => e.type === "reminder" && !e.done && e.id !== activeEv?.id);
+
+    if (remEv) {
+      el.islandReminderInfo.classList.remove("hidden");
+      el.islandReminderInfo.innerHTML = `<span>🔔 ${remEv.hasStartAt ? `${minToTimeStr(remEv.startMin)} ` : ""}${escapeHtml(remEv.title)}</span><span>이동 ›</span>`;
+      el.islandReminderInfo.onclick = (e) => {
+        e.stopPropagation();
+        jumpToSchedule(remEv);
+      };
+    } else {
+      el.islandReminderInfo.classList.add("hidden");
+      el.islandReminderInfo.onclick = null;
+    }
+
+    alignDynamicIsland();
   }
 
   /* -------------------- 우측 요약 & 위젯 -------------------- */
@@ -1217,20 +1558,20 @@
       card.querySelector(".schedule-yt-btn").addEventListener("click", async () => {
         const startMin = findNextAvailableSlot(yt.durationMin);
         try {
-          await PlannerAPI.createSchedule({
-            date: currentDate,
-            start_at: PlannerAPI.kstMinutesToIso(currentDate, startMin),
-            end_at: PlannerAPI.kstMinutesToIso(currentDate, Math.min(1440, startMin + yt.durationMin)),
-            title: `📺 ${yt.title}`,
-            type: "schedule",
-            source: "app",
-            memo: yt.url || ""
-          });
-          schedules = await PlannerAPI.fetchSchedules(currentDate);
-          renderAll();
-          showToast(`${minToTimeStr(startMin)}에 유튜브 일정을 등록했습니다.`);
+          await createScheduleAndRecord(
+            {
+              date: currentDate,
+              start_at: PlannerAPI.kstMinutesToIso(currentDate, startMin),
+              end_at: PlannerAPI.kstMinutesToIso(currentDate, Math.min(1440, startMin + yt.durationMin)),
+              title: `📺 ${yt.title}`,
+              type: "schedule",
+              source: "app",
+              memo: yt.url || ""
+            },
+            `${minToTimeStr(startMin)}에 유튜브 일정을 등록했습니다.`
+          );
         } catch (err) {
-          showToast(`등록 실패: ${err.message}`);
+          showToast(`등록 실패: ${err.message}`, "⚠️");
         }
       });
 
@@ -1413,8 +1754,29 @@
       showToast(prefs.theme === "light" ? "라이트 모드로 전환했습니다" : "다크 모드로 전환했습니다");
     });
 
+    el.undoBtn.addEventListener("click", () => {
+      undoLastAction();
+    });
+
     el.syncNowBtn.addEventListener("click", () => {
-      loadDay(currentDate, false).then(() => showToast("일정을 새로고침했습니다."));
+      loadDay(currentDate, false).then(() => showToast("일정을 새로고침했습니다.", "🔄"));
+    });
+
+    const compactBar = el.nowBanner.querySelector(".island-compact");
+    if (compactBar) {
+      compactBar.addEventListener("click", (e) => {
+        e.stopPropagation();
+        alignDynamicIsland();
+        el.nowBanner.classList.toggle("is-expanded");
+      });
+    }
+    el.nowBanner.addEventListener("mouseenter", alignDynamicIsland);
+    el.nowBanner.addEventListener("focusin", alignDynamicIsland);
+    window.addEventListener("resize", alignDynamicIsland);
+    document.addEventListener("click", (e) => {
+      if (!el.nowBanner.contains(e.target)) {
+        el.nowBanner.classList.remove("is-expanded");
+      }
     });
 
     el.typeFilterBar.querySelectorAll(".filter-chip").forEach((btn) => {
@@ -1438,21 +1800,21 @@
       if (!title) return;
       const type = el.newStagedType.value || "task";
       try {
-        await PlannerAPI.createSchedule({
-          date: currentDate,
-          start_at: null,
-          end_at: null,
-          title,
-          type,
-          source: "app",
-          memo: ""
-        });
         el.newStagedTitle.value = "";
-        schedules = await PlannerAPI.fetchSchedules(currentDate);
-        renderAll();
-        showToast("시간 미정 일정을 등록했습니다.");
+        await createScheduleAndRecord(
+          {
+            date: currentDate,
+            start_at: null,
+            end_at: null,
+            title,
+            type,
+            source: "app",
+            memo: ""
+          },
+          "시간 미정 일정을 등록했습니다."
+        );
       } catch (err) {
-        showToast(`등록 실패: ${err.message}`);
+        showToast(`등록 실패: ${err.message}`, "⚠️");
       }
     });
 
@@ -1551,20 +1913,51 @@
       };
 
       try {
-        if (id) {
-          await PlannerAPI.patchSchedule(id, payload, currentDate);
-          showToast("일정을 수정했습니다.");
-        } else {
-          await PlannerAPI.createSchedule({
-            ...payload,
-            source: "app"
-          });
-          showToast("새 일정을 등록했습니다.");
-        }
         el.eventModal.classList.add("hidden");
-        await loadDay(dateVal === currentDate ? currentDate : dateVal, false);
+        if (id) {
+          const prevEv = schedules.find((s) => s.id === id);
+          lastUserMutationAt = Date.now();
+          const updated = await PlannerAPI.patchSchedule(id, payload, currentDate);
+          if (updated && updated.date === currentDate) {
+            schedules = PlannerAPI.sortSchedules(schedules.map((s) => (s.id === id ? updated : s)));
+            syncSwrCacheIfCurrent(currentDate, schedules);
+            renderAll();
+          } else {
+            await loadDay(dateVal === currentDate ? currentDate : dateVal, false);
+          }
+          if (prevEv) {
+            const snapPatch = {
+              date: prevEv.date,
+              title: prevEv.title,
+              type: prevEv.type,
+              start_at: prevEv.start_at,
+              end_at: prevEv.end_at,
+              done: prevEv.done,
+              memo: prevEv.memo || ""
+            };
+            pushUndoAction(`'${prevEv.title}' 수정`, async () => {
+              const reverted = await PlannerAPI.patchSchedule(id, snapPatch, snapPatch.date);
+              if (reverted && reverted.date === currentDate) {
+                schedules = PlannerAPI.sortSchedules(schedules.map((s) => (s.id === id ? reverted : s)));
+                syncSwrCacheIfCurrent(currentDate, schedules);
+                renderAll();
+              } else {
+                await loadDay(snapPatch.date, false);
+              }
+            });
+          }
+          showToast("일정을 수정했습니다.", "✏️");
+        } else {
+          await createScheduleAndRecord(
+            {
+              ...payload,
+              source: "app"
+            },
+            "새 일정을 등록했습니다."
+          );
+        }
       } catch (err) {
-        showToast(`저장 실패: ${err.message}`);
+        showToast(`저장 실패: ${err.message}`, "⚠️");
       }
     });
 
@@ -1658,7 +2051,14 @@
       const tag = document.activeElement?.tagName;
       const isEditingText = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey && !isEditingText) {
+        e.preventDefault();
+        undoLastAction();
+        return;
+      }
+
       if (e.key === "Escape") {
+        el.nowBanner.classList.remove("is-expanded");
         document.querySelectorAll(".modal-backdrop").forEach((m) => m.classList.add("hidden"));
         return;
       }

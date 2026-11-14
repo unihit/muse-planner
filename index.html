@@ -38,25 +38,59 @@
         </div>
       </div>
 
-      <!-- 지금 하는 일 실시간 하이라이트 배너 -->
-      <div id="nowBanner" class="now-banner">
-        <div class="now-badge-wrap">
-          <span id="nowPulseDot" class="pulse-dot"></span>
-          <span id="nowBannerLabel" class="now-label">NOW</span>
-        </div>
-        <div class="now-info">
-          <div id="nowEventTitle" class="now-title">일정을 불러오는 중...</div>
-          <div class="now-meta-row">
-            <span id="nowEventTime" class="now-time">--:-- ~ --:--</span>
-            <div class="now-progress-track">
-              <div id="nowProgressBar" class="now-progress-bar" style="width: 0%"></div>
-            </div>
-            <span id="nowRemaining" class="now-remaining"></span>
+      <!-- Apple Dynamic Island 스타일 실시간 컨트롤 센터 -->
+      <div id="nowBanner" class="now-banner dynamic-island" tabindex="0" role="region" aria-label="실시간 일정 다이나믹 아일랜드">
+        <div class="island-compact">
+          <div class="now-badge-wrap">
+            <span id="nowPulseDot" class="pulse-dot"></span>
+            <span id="nowBannerLabel" class="now-label">NOW</span>
           </div>
+          <div class="island-ring-wrap" title="진행률">
+            <svg class="island-ring" width="20" height="20" viewBox="0 0 20 20">
+              <circle class="ring-bg" cx="10" cy="10" r="7.5"></circle>
+              <circle id="islandRingFg" class="ring-fg" cx="10" cy="10" r="7.5"></circle>
+            </svg>
+          </div>
+          <div id="nowEventTitle" class="now-title">일정을 불러오는 중...</div>
+          <span id="nowRemaining" class="now-remaining"></span>
+          <span class="island-chevron" aria-hidden="true">▾</span>
         </div>
-        <div class="now-actions">
-          <button id="nowExtendBtn" class="chip-btn subtle hidden" title="현재 일정 +15분">+15m</button>
-          <button id="nowDoneBtn" class="chip-btn primary hidden" title="현재 일정 완료 체크">✓ 완료</button>
+
+        <!-- 라이브 액티비티 모핑 오버레이 (토스트 연동) -->
+        <div id="islandLiveToast" class="island-live-toast hidden" aria-live="polite">
+          <span id="islandLiveIcon" class="island-live-icon">✨</span>
+          <span id="islandLiveText" class="island-live-text">변경사항이 반영되었습니다</span>
+        </div>
+
+        <!-- 확장 컨트롤 센터 (호버 / 클릭 고정 시 오픈) -->
+        <div id="islandExpanded" class="island-expanded">
+          <div class="island-exp-header">
+            <div class="island-exp-badges">
+              <span id="islandTypeBadge" class="island-pill-badge">일정</span>
+              <span id="nowEventTime" class="now-time">--:-- ~ --:--</span>
+            </div>
+            <span id="islandElapsedText" class="island-elapsed">0% 진행</span>
+          </div>
+
+          <div class="now-progress-track">
+            <div id="nowProgressBar" class="now-progress-bar" style="width: 0%"></div>
+          </div>
+
+          <div id="islandMemoPreview" class="island-memo hidden"></div>
+
+          <div class="now-actions island-actions-grid">
+            <button id="nowMinusBtn" type="button" class="island-act-btn hidden" title="종료 시각 15분 줄이기">-15m</button>
+            <button id="nowExtendBtn" type="button" class="island-act-btn hidden" title="종료 시각 15분 늘리기">+15m</button>
+            <button id="nowPlus30Btn" type="button" class="island-act-btn hidden" title="종료 시각 30분 늘리기">+30m</button>
+            <button id="nowStartNowBtn" type="button" class="island-act-btn accent hidden" title="이 일정을 지금 시각부터 바로 시작">▶ 지금 시작</button>
+            <button id="nowJumpBtn" type="button" class="island-act-btn" title="타임라인 해당 위치로 이동">📍 위치로</button>
+            <button id="nowDoneBtn" type="button" class="island-act-btn primary hidden" title="현재 일정 완료 체크">✓ 완료</button>
+          </div>
+
+          <div id="islandUpNextRow" class="island-upnext-row">
+            <div id="islandNextInfo" class="island-sub-item">다음 일정 없음</div>
+            <div id="islandReminderInfo" class="island-sub-item is-reminder hidden"></div>
+          </div>
         </div>
       </div>
 
@@ -88,6 +122,13 @@
           </svg>
           <svg class="icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>
+          </svg>
+        </button>
+
+        <button id="undoBtn" class="icon-btn" title="실행 취소 (Ctrl+Z)" aria-label="실행 취소" disabled>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 7v6h6"></path>
+            <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path>
           </svg>
         </button>
 

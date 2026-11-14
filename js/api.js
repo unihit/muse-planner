@@ -10,6 +10,7 @@
 (function (global) {
   const SETTINGS_KEY = "muse_planner_api_settings_v2";
   const DAY_STORAGE_PREFIX = "muse_planner_schedules_day_v2_";
+  const AGENT_CACHE_PREFIX = "muse_planner_agent_cache_v2_";
   const WIDGETS_STORAGE_PREFIX = "muse_planner_widgets_v2_";
   const PREFS_KEY = "muse_planner_ui_prefs_v2";
 
@@ -424,6 +425,28 @@
     return json;
   }
 
+  function getCachedSchedules(dateStr) {
+    if (!dateStr) return null;
+    try {
+      const raw = localStorage.getItem(AGENT_CACHE_PREFIX + dateStr);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return null;
+      return sortSchedules(parsed.map((item) => normalizeScheduleRecord(item, dateStr)));
+    } catch {
+      return null;
+    }
+  }
+
+  function setCachedSchedules(dateStr, items) {
+    if (!dateStr || !Array.isArray(items)) return;
+    try {
+      localStorage.setItem(AGENT_CACHE_PREFIX + dateStr, JSON.stringify(sortSchedules(items)));
+    } catch {
+      // ignore quota errors
+    }
+  }
+
   async function fetchSchedules(dateStr) {
     const settings = getSettings();
     if (settings.mode === "agent") {
@@ -431,6 +454,7 @@
       const normalized = sortSchedules(
         (Array.isArray(rows) ? rows : []).map((r) => normalizeScheduleRecord(r, dateStr))
       );
+      setCachedSchedules(dateStr, normalized);
       return normalized;
     }
     return loadLocalSchedules(dateStr);
@@ -463,7 +487,12 @@
         method: "POST",
         body: payload
       });
-      return normalizeScheduleRecord(created, payload.date);
+      const normalized = normalizeScheduleRecord(created, payload.date);
+      const cached = getCachedSchedules(normalized.date);
+      if (cached) {
+        setCachedSchedules(normalized.date, [...cached.filter((x) => x.id !== normalized.id), normalized]);
+      }
+      return normalized;
     }
 
     const dateStr = payload.date || todayKst();
@@ -491,7 +520,22 @@
         method: "PATCH",
         body: patch
       });
-      return normalizeScheduleRecord(updated, dateHint);
+      const normalized = normalizeScheduleRecord(updated, dateHint);
+      const cacheDates = new Set([dateHint, normalized.date].filter(Boolean));
+      for (const d of cacheDates) {
+        const cached = getCachedSchedules(d);
+        if (!cached) continue;
+        if (d === normalized.date) {
+          const exists = cached.some((item) => item.id === normalized.id);
+          const next = exists
+            ? cached.map((item) => (item.id === normalized.id ? normalized : item))
+            : [...cached, normalized];
+          setCachedSchedules(d, next);
+        } else {
+          setCachedSchedules(d, cached.filter((item) => item.id !== normalized.id));
+        }
+      }
+      return normalized;
     }
 
     const dateStr = dateHint || todayKst();
@@ -532,6 +576,12 @@
       await requestAgentApi(settings, `/v1/schedules/${encodeURIComponent(id)}`, {
         method: "DELETE"
       });
+      if (dateHint) {
+        const cached = getCachedSchedules(dateHint);
+        if (cached) {
+          setCachedSchedules(dateHint, cached.filter((item) => item.id !== id));
+        }
+      }
       return;
     }
 
@@ -584,6 +634,10 @@
     resetLocalSeed,
     loadWidgetsState,
     saveWidgetsState,
+    normalizeScheduleRecord,
+    sortSchedules,
+    getCachedSchedules,
+    setCachedSchedules,
     fetchSchedules,
     fetchSchedulesRange,
     createSchedule,
