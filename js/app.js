@@ -7,8 +7,6 @@
     reminder: { label: "알림", badge: "🔔 알림", color: "#f59e0b" }
   };
 
-  const hashConnectResult = PlannerAPI.applyHashConnection();
-
   let currentDate = PlannerAPI.todayKst();
   let prefs = PlannerAPI.getPrefs();
   let schedules = [];
@@ -145,8 +143,6 @@
     authGatePassword: document.getElementById("authGatePassword"),
     authGateError: document.getElementById("authGateError"),
     authGateSubmitBtn: document.getElementById("authGateSubmitBtn"),
-    authUseLocalBtn: document.getElementById("authUseLocalBtn"),
-    authUseAgentBtn: document.getElementById("authUseAgentBtn"),
     apiSettingsForm: document.getElementById("apiSettingsForm"),
     supabaseFields: document.getElementById("supabaseFields"),
     sbSignedInBox: document.getElementById("sbSignedInBox"),
@@ -156,13 +152,6 @@
     sbLoginEmail: document.getElementById("sbLoginEmail"),
     sbLoginPassword: document.getElementById("sbLoginPassword"),
     sbLoginBtn: document.getElementById("sbLoginBtn"),
-    agentFields: document.getElementById("agentFields"),
-    agentApiUrl: document.getElementById("agentApiUrl"),
-    agentApiToken: document.getElementById("agentApiToken"),
-    copyConnectLinkBtn: document.getElementById("copyConnectLinkBtn"),
-    musePayloadPreview: document.getElementById("musePayloadPreview"),
-    copyMusePromptBtn: document.getElementById("copyMusePromptBtn"),
-    seedTestDataBtn: document.getElementById("seedTestDataBtn"),
 
     toast: document.getElementById("toast")
   };
@@ -425,9 +414,7 @@
     if (document.hidden || activeHtmlDragPayload || activePointerDrag) return true;
     if (Date.now() - lastUserMutationAt < 2500) return true;
     if (document.querySelector(".modal-backdrop:not(.hidden)")) return true;
-    const s = PlannerAPI.getSettings();
-    if (s.mode === "supabase" && !supabaseSession) return true;
-    if (s.mode === "agent" && (!s.agentApiUrl || !s.agentApiToken)) return true;
+    if (!supabaseSession) return true;
     return false;
   }
 
@@ -500,130 +487,60 @@
   }
 
   async function setupRealtimeSync(forceReconnect = false) {
-    const s = PlannerAPI.getSettings();
-    if (s.mode === "supabase") {
-      if (!supabaseSession) {
-        try {
-          supabaseSession = await PlannerAPI.getSupabaseSession();
-        } catch {
-          supabaseSession = null;
-        }
-      }
-      if (!supabaseSession) {
-        await disconnectRealtime();
-        return;
-      }
-
-      const nextKey = `supabase|${supabaseSession.user?.id || ""}`;
-      if (!forceReconnect && (realtimeConnecting || (realtimeChannel && realtimeConfigKey === nextKey))) {
-        return;
-      }
-
-      realtimeConnecting = true;
+    if (!supabaseSession) {
       try {
-        const sb = await PlannerAPI.getSupabaseClient();
-        await disconnectRealtime();
-
-        realtimeConfigKey = nextKey;
-        realtimeClient = sb;
-        realtimeChannel = sb
-          .channel("muse-schedules-db")
-          .on(
-            "postgres_changes",
-            { event: "*", schema: "public", table: "schedules" },
-            (payload) => {
-              const nextRow = payload?.new || {};
-              const oldRow = payload?.old || {};
-              const changedDate = nextRow.date || null;
-              const oldDate = oldRow.date || null;
-
-              if (changedDate && changedDate !== currentDate) {
-                PlannerAPI.clearCachedSchedules(changedDate);
-              }
-              if (oldDate && oldDate !== currentDate) {
-                PlannerAPI.clearCachedSchedules(oldDate);
-              }
-
-              const affectsCurrent =
-                (!changedDate && !oldDate) ||
-                changedDate === currentDate ||
-                oldDate === currentDate;
-              if (!affectsCurrent) return;
-
-              clearTimeout(realtimeDebounceTimer);
-              realtimeDebounceTimer = setTimeout(() => {
-                syncIfChanged(true, { force: true, fromBroadcast: true });
-              }, 180);
-            }
-          )
-          .subscribe((status) => {
-            const isSub = status === "SUBSCRIBED";
-            if (realtimeConnected !== isSub) {
-              realtimeConnected = isSub;
-              updateApiBadge();
-            }
-          });
+        supabaseSession = await PlannerAPI.getSupabaseSession();
       } catch {
-        realtimeConnected = false;
-        updateApiBadge();
-      } finally {
-        realtimeConnecting = false;
+        supabaseSession = null;
       }
-      return;
     }
-
-    if (s.mode !== "agent" || !s.agentApiUrl || !s.agentApiToken) {
+    if (!supabaseSession) {
       await disconnectRealtime();
       return;
     }
 
-    const nextKey = `${s.agentApiUrl}|${s.agentApiToken}`;
+    const nextKey = `supabase|${supabaseSession.user?.id || ""}`;
     if (!forceReconnect && (realtimeConnecting || (realtimeChannel && realtimeConfigKey === nextKey))) {
       return;
     }
 
     realtimeConnecting = true;
     try {
-      const cfg = await PlannerAPI.fetchRealtimeConfig();
-      const latest = PlannerAPI.getSettings();
-      if (`${latest.agentApiUrl}|${latest.agentApiToken}` !== nextKey || latest.mode !== "agent") {
-        return;
-      }
-      if (!cfg?.enabled || !cfg.supabaseUrl || !cfg.supabaseAnonKey) {
-        await disconnectRealtime();
-        return;
-      }
-
-      const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+      const sb = await PlannerAPI.getSupabaseClient();
       await disconnectRealtime();
 
       realtimeConfigKey = nextKey;
-      realtimeClient = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
-        auth: { persistSession: false, autoRefreshToken: false }
-      });
+      realtimeClient = sb;
+      realtimeChannel = sb
+        .channel("muse-schedules-db")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "schedules" },
+          (payload) => {
+            const nextRow = payload?.new || {};
+            const oldRow = payload?.old || {};
+            const changedDate = nextRow.date || null;
+            const oldDate = oldRow.date || null;
 
-      const channelName = cfg.channel || "muse-schedules";
-      const eventName = cfg.event || "schedules_changed";
+            if (changedDate && changedDate !== currentDate) {
+              PlannerAPI.clearCachedSchedules(changedDate);
+            }
+            if (oldDate && oldDate !== currentDate) {
+              PlannerAPI.clearCachedSchedules(oldDate);
+            }
 
-      realtimeChannel = realtimeClient
-        .channel(channelName)
-        .on("broadcast", { event: eventName }, (msg) => {
-          const payload = msg?.payload ?? msg ?? {};
-          if (payload.date && payload.date !== currentDate) {
-            PlannerAPI.clearCachedSchedules(payload.date);
+            const affectsCurrent =
+              (!changedDate && !oldDate) ||
+              changedDate === currentDate ||
+              oldDate === currentDate;
+            if (!affectsCurrent) return;
+
+            clearTimeout(realtimeDebounceTimer);
+            realtimeDebounceTimer = setTimeout(() => {
+              syncIfChanged(true, { force: true, fromBroadcast: true });
+            }, 180);
           }
-          if (payload.prevDate && payload.prevDate !== currentDate) {
-            PlannerAPI.clearCachedSchedules(payload.prevDate);
-          }
-          const affectsCurrent =
-            !payload.date || payload.date === currentDate || payload.prevDate === currentDate;
-          if (!affectsCurrent) return;
-
-          clearTimeout(realtimeDebounceTimer);
-          realtimeDebounceTimer = setTimeout(() => {
-            syncIfChanged(true, { force: true, fromBroadcast: true });
-          }, 180);
-        })
+        )
         .subscribe((status) => {
           const isSub = status === "SUBSCRIBED";
           if (realtimeConnected !== isSub) {
@@ -921,26 +838,12 @@
   }
 
   function updateApiBadge() {
-    const s = PlannerAPI.getSettings();
-    if (s.mode === "supabase") {
-      if (supabaseSession) {
-        el.apiSourceDot.className = realtimeConnected ? "source-dot agent realtime" : "source-dot agent";
-        el.apiSourceLabel.textContent = realtimeConnected ? "실시간 연결" : "계정 연결됨";
-      } else {
-        el.apiSourceDot.className = "source-dot agent-warn";
-        el.apiSourceLabel.textContent = "로그인 필요";
-      }
-    } else if (s.mode === "agent") {
-      if (s.agentApiUrl && s.agentApiToken) {
-        el.apiSourceDot.className = realtimeConnected ? "source-dot agent realtime" : "source-dot agent";
-        el.apiSourceLabel.textContent = realtimeConnected ? "실시간 연결" : "Agent API";
-      } else {
-        el.apiSourceDot.className = "source-dot agent-warn";
-        el.apiSourceLabel.textContent = "API 설정 필요";
-      }
+    if (supabaseSession) {
+      el.apiSourceDot.className = realtimeConnected ? "source-dot agent realtime" : "source-dot agent";
+      el.apiSourceLabel.textContent = realtimeConnected ? "실시간 연결" : "계정 연결됨";
     } else {
-      el.apiSourceDot.className = "source-dot local";
-      el.apiSourceLabel.textContent = "로컬 모드";
+      el.apiSourceDot.className = "source-dot agent-warn";
+      el.apiSourceLabel.textContent = "로그인 필요";
     }
   }
 
@@ -2160,8 +2063,7 @@
 
   function updateAuthGateVisibility() {
     if (!el.authGate) return;
-    const s = PlannerAPI.getSettings();
-    const shouldShowGate = s.mode === "supabase" && !supabaseSession;
+    const shouldShowGate = !supabaseSession;
     el.authGate.classList.toggle("hidden", !shouldShowGate);
     if (shouldShowGate && el.authGateEmail && !el.authGateEmail.value) {
       setTimeout(() => el.authGateEmail?.focus(), 40);
@@ -2169,34 +2071,8 @@
   }
 
   function openApiSettingsModal() {
-    const s = PlannerAPI.getSettings();
-    const radio = el.apiSettingsForm.querySelector(`input[name="apiMode"][value="${s.mode}"]`);
-    if (radio) radio.checked = true;
-
-    el.agentApiUrl.value = s.agentApiUrl || "";
-    el.agentApiToken.value = s.agentApiToken || "";
     updateSupabaseAuthUi();
-    toggleProviderFields(s.mode);
-    updateMuseSnippet();
     el.apiModal.classList.remove("hidden");
-  }
-
-  function toggleProviderFields(mode) {
-    el.supabaseFields.classList.toggle("hidden", mode !== "supabase");
-    el.agentFields.classList.toggle("hidden", mode !== "agent");
-  }
-
-  function updateMuseSnippet() {
-    const sample = {
-      date: currentDate,
-      start_at: `${currentDate}T13:00:00+09:00`,
-      end_at: `${currentDate}T14:00:00+09:00`,
-      title: "홈트 토요일 루틴",
-      type: "schedule",
-      source: "muse",
-      memo: ""
-    };
-    el.musePayloadPreview.textContent = JSON.stringify(sample, null, 2);
   }
 
   /* -------------------- 이벤트 바인딩 -------------------- */
@@ -2503,50 +2379,8 @@
       renderPresets();
     });
 
-    // API 모달
+    // 계정 관리 모달
     el.openApiModalBtn.addEventListener("click", openApiSettingsModal);
-    el.apiSettingsForm.querySelectorAll('input[name="apiMode"]').forEach((radio) => {
-      radio.addEventListener("change", () => toggleProviderFields(radio.value));
-    });
-
-    el.copyMusePromptBtn.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(el.musePayloadPreview.textContent);
-        showToast("POST /v1/schedules 요청 예시를 복사했습니다.");
-      } catch {
-        showToast("복사에 실패했습니다.");
-      }
-    });
-
-    el.seedTestDataBtn.addEventListener("click", async () => {
-      try {
-        const targetDate = "2026-11-14";
-        const { insertedCount } = await PlannerAPI.seedTestSchedulesForDate(targetDate);
-        el.apiModal.classList.add("hidden");
-        await loadDay(targetDate);
-        showToast(
-          insertedCount > 0
-            ? `${targetDate} 테스트 일정 ${insertedCount}건을 등록했습니다.`
-            : `${targetDate} 테스트 일정 9건이 이미 모두 등록되어 있습니다.`
-        );
-      } catch (err) {
-        showToast(`테스트 데이터 등록 실패: ${err.message}`);
-      }
-    });
-
-    el.copyConnectLinkBtn.addEventListener("click", async () => {
-      const link = PlannerAPI.buildConnectUrl(el.agentApiUrl.value.trim(), el.agentApiToken.value.trim());
-      if (!link) {
-        showToast("Agent API URL과 Bearer 토큰을 먼저 입력해 주세요.", "⚠️");
-        return;
-      }
-      try {
-        await navigator.clipboard.writeText(link);
-        showToast("원클릭 연결 링크를 복사했습니다. 북마크하거나 다른 기기에서 열면 바로 연동됩니다.", "🔗");
-      } catch {
-        showToast("복사에 실패했습니다.");
-      }
-    });
 
     async function performSupabaseLogin() {
       const email = el.sbLoginEmail.value.trim();
@@ -2570,7 +2404,7 @@
         showToast(`로그인 실패: ${err.message}`, "⚠️");
       } finally {
         el.sbLoginBtn.disabled = false;
-        el.sbLoginBtn.textContent = "로그인 및 동기화";
+        el.sbLoginBtn.textContent = "로그인";
       }
     }
 
@@ -2584,6 +2418,7 @@
       }
       supabaseSession = null;
       await disconnectRealtime();
+      el.apiModal.classList.add("hidden");
       updateSupabaseAuthUi();
       updateApiBadge();
       schedules = [];
@@ -2615,46 +2450,13 @@
       }
     });
 
-    el.authUseLocalBtn.addEventListener("click", async () => {
-      PlannerAPI.saveSettings({
-        ...PlannerAPI.getSettings(),
-        mode: "local",
-        localExplicit: true
-      });
-      updateAuthGateVisibility();
-      updateApiBadge();
-      await loadDay(currentDate);
-      showToast("로컬 모드로 전환했습니다.");
-    });
-
-    el.authUseAgentBtn.addEventListener("click", () => {
-      el.authGate.classList.add("hidden");
-      openApiSettingsModal();
-      const agentRadio = el.apiSettingsForm.querySelector('input[name="apiMode"][value="agent"]');
-      if (agentRadio) {
-        agentRadio.checked = true;
-        toggleProviderFields("agent");
-      }
-    });
-
     el.apiSettingsForm.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const mode = el.apiSettingsForm.querySelector('input[name="apiMode"]:checked')?.value || "supabase";
-      if (mode === "supabase" && !supabaseSession) {
+      if (!supabaseSession) {
         await performSupabaseLogin();
-        return;
+      } else {
+        el.apiModal.classList.add("hidden");
       }
-      PlannerAPI.saveSettings({
-        mode,
-        localExplicit: mode === "local",
-        agentApiUrl: el.agentApiUrl.value.trim(),
-        agentApiToken: el.agentApiToken.value.trim()
-      });
-      el.apiModal.classList.add("hidden");
-      updateAuthGateVisibility();
-      await loadDay(currentDate);
-      await setupRealtimeSync(true);
-      showToast("설정을 저장하고 일정을 불러왔습니다.");
     });
 
     // 모달 닫기
@@ -2701,22 +2503,17 @@
 
   (async function bootstrap() {
     try {
-      const s = PlannerAPI.getSettings();
-      if (s.mode === "supabase") {
-        supabaseSession = await PlannerAPI.getSupabaseSession();
-      }
+      supabaseSession = await PlannerAPI.getSupabaseSession();
       const sb = await PlannerAPI.getSupabaseClient().catch(() => null);
       if (sb) {
         sb.auth.onAuthStateChange((_event, session) => {
           supabaseSession = session || null;
           updateApiBadge();
           updateSupabaseAuthUi();
-          if (PlannerAPI.getSettings().mode === "supabase") {
-            if (supabaseSession) {
-              setupRealtimeSync(true);
-            } else {
-              disconnectRealtime();
-            }
+          if (supabaseSession) {
+            setupRealtimeSync(true);
+          } else {
+            disconnectRealtime();
           }
         });
       }
@@ -2725,27 +2522,13 @@
     }
 
     updateSupabaseAuthUi();
-    if (PlannerAPI.getSettings().mode !== "supabase" || supabaseSession) {
+    if (supabaseSession) {
       await loadDay(currentDate);
     } else {
       updateApiBadge();
     }
-    if (hashConnectResult.applied) {
-      updateAuthGateVisibility();
-      showToast("원클릭 링크로 Muse API에 자동 연결되었습니다.", "🔗");
-    }
     setupRealtimeSync();
   })();
-
-  window.addEventListener("hashchange", () => {
-    const res = PlannerAPI.applyHashConnection();
-    if (res.applied) {
-      loadDay(currentDate).then(() => {
-        setupRealtimeSync(true);
-        showToast("원클릭 링크로 Muse API에 자동 연결되었습니다.", "🔗");
-      });
-    }
-  });
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {

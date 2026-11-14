@@ -146,37 +146,10 @@
   /* -------------------- 설정 & 환경변수 분리 로드 -------------------- */
 
   function getSettings() {
-    const localOverride =
-      global.MUSE_PLANNER_LOCAL_CONFIG && typeof global.MUSE_PLANNER_LOCAL_CONFIG === "object"
-        ? global.MUSE_PLANNER_LOCAL_CONFIG
-        : {};
-    let stored = {};
-    try {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      stored = raw ? JSON.parse(raw) : {};
-    } catch {
-      stored = {};
-    }
-
-    const merged = {
+    return {
       ...DEFAULT_SETTINGS,
-      ...localOverride,
-      ...stored
+      mode: "supabase"
     };
-
-    // 사용자가 아직 저장하지 않았고 config.local.js 에 토큰이 있으면 agent 모드 우선
-    if (!stored.mode && localOverride.agentApiUrl && localOverride.agentApiToken) {
-      merged.mode = "agent";
-    }
-    // 이전 버전에서 기본값이었던 'local' 상태는 명시적 선택이 아니면 로그인 모드로 전환
-    if (stored.mode === "local" && !stored.localExplicit) {
-      merged.mode = "supabase";
-    }
-    merged.mode = ["supabase", "agent", "local"].includes(merged.mode) ? merged.mode : "supabase";
-    merged.localExplicit = Boolean(merged.localExplicit);
-    merged.agentApiUrl = String(merged.agentApiUrl || "").trim().replace(/\/+$/, "");
-    merged.agentApiToken = String(merged.agentApiToken || "").trim();
-    return merged;
   }
 
   function saveSettings(next) {
