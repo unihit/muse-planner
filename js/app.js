@@ -1505,6 +1505,11 @@
             toggleScheduleDone(rem.id, e.target.checked);
           });
 
+          card.querySelector(".reminder-pill-title").addEventListener("click", (e) => {
+            e.stopPropagation();
+            openEventModal(rem.id);
+          });
+
           card.addEventListener("click", () => {
             if (rem.hasStartAt) {
               el.timelineScroll.scrollTo({
