@@ -1185,6 +1185,17 @@ html[data-theme="light"] .action-btn {
 
 .dock-section {
   margin-bottom: 14px;
+  border-radius: 10px;
+  transition: background-color 0.14s ease, box-shadow 0.14s ease, padding 0.14s ease;
+}
+
+.dock-section.is-drop-target {
+  background: var(--accent-soft);
+  outline: 1.5px dashed var(--accent);
+  outline-offset: -1px;
+  padding: 6px;
+  margin-left: -6px;
+  margin-right: -6px;
 }
 
 .section-title-row {
@@ -1225,6 +1236,15 @@ html[data-theme="light"] .action-btn {
 .dock-card:hover {
   border-color: var(--accent);
   transform: translateY(-1px);
+}
+
+.dock-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.dock-card.is-dragging {
+  opacity: 0.45;
+  transform: scale(0.98);
 }
 
 .dock-card.is-done {

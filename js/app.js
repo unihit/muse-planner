@@ -1747,7 +1747,6 @@
               <span>${TYPE_META[item.type]?.label || "일정"}</span>
               <div class="dock-card-actions">
                 <button type="button" class="mini-btn place-btn" title="빈 시간에 배치">+ 배치</button>
-                <button type="button" class="mini-btn defer-btn" title="나중에 할 일(백로그)로 보관">📦</button>
                 <button type="button" class="mini-btn del del-btn" title="삭제">✕</button>
               </div>
             </div>
@@ -1767,10 +1766,6 @@
             await commitScheduleTimeChange(item, startMin, endMin);
           });
 
-          card.querySelector(".defer-btn").addEventListener("click", () => {
-            moveItemBetweenDayAndBacklog(item, null);
-          });
-
           card.querySelector(".del-btn").addEventListener("click", () => {
             deleteScheduleById(item.id);
           });
@@ -1780,13 +1775,19 @@
               kind: "untimed",
               id: item.id,
               title: item.title,
-              durationMin: item.type === "reminder" ? 0 : 30,
+              durationMin: item.type === "reminder" ? 0 : getDefaultDurationMin(),
               type: item.type
             };
-            e.dataTransfer.setData("text/plain", JSON.stringify(activeHtmlDragPayload));
+            card.classList.add("is-dragging");
+            if (e.dataTransfer) {
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", JSON.stringify(activeHtmlDragPayload));
+            }
           });
           card.addEventListener("dragend", () => {
             activeHtmlDragPayload = null;
+            card.classList.remove("is-dragging");
+            clearDockDropTargets();
             el.ghostPreview.classList.add("hidden");
           });
 
@@ -1827,6 +1828,7 @@
               card.className = `dock-card is-placed ${item.done ? "is-done" : ""}`;
               card.dataset.id = item.id;
               card.dataset.type = item.type;
+              card.draggable = true;
 
               const timeLabel =
                 item.hasEndAt && item.endMin !== null
@@ -1867,6 +1869,33 @@
                 showToast("미배치 목록으로 옮겼습니다.", "📥");
               });
 
+              card.addEventListener("dragstart", (e) => {
+                const dur =
+                  item.type === "reminder"
+                    ? 0
+                    : item.hasEndAt && item.endMin !== null
+                      ? Math.max(15, item.endMin - item.startMin)
+                      : getDefaultDurationMin();
+                activeHtmlDragPayload = {
+                  kind: "placed",
+                  id: item.id,
+                  title: item.title,
+                  durationMin: dur,
+                  type: item.type
+                };
+                card.classList.add("is-dragging");
+                if (e.dataTransfer) {
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", JSON.stringify(activeHtmlDragPayload));
+                }
+              });
+              card.addEventListener("dragend", () => {
+                activeHtmlDragPayload = null;
+                card.classList.remove("is-dragging");
+                clearDockDropTargets();
+                el.ghostPreview.classList.add("hidden");
+              });
+
               el.placedList.appendChild(card);
             }
           });
@@ -1887,7 +1916,7 @@
           animateListReorder(el.backlogList, () => {
             el.backlogList.innerHTML = "";
             if (!backlogSorted.length) {
-              el.backlogList.innerHTML = `<div class="empty-hint">나중에 할 일이 없습니다.<br/>위에서 추가하거나 미배치 카드의 📦 버튼으로 보류하세요.</div>`;
+              el.backlogList.innerHTML = `<div class="empty-hint">나중에 할 일이 없습니다.<br/>위에서 추가하거나 미배치·배치 항목을 여기로 끌어다 놓으세요.</div>`;
               return;
             }
             for (const item of backlogSorted) {
@@ -1935,10 +1964,16 @@
                   durationMin: item.type === "reminder" ? 0 : getDefaultDurationMin(),
                   type: item.type
                 };
-                e.dataTransfer.setData("text/plain", JSON.stringify(activeHtmlDragPayload));
+                card.classList.add("is-dragging");
+                if (e.dataTransfer) {
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", JSON.stringify(activeHtmlDragPayload));
+                }
               });
               card.addEventListener("dragend", () => {
                 activeHtmlDragPayload = null;
+                card.classList.remove("is-dragging");
+                clearDockDropTargets();
                 el.ghostPreview.classList.add("hidden");
               });
 
@@ -2227,23 +2262,36 @@
     targetLayer.appendChild(marker);
   }
 
+  function isPointInElRect(node, clientX, clientY) {
+    if (!node || node.classList?.contains("hidden")) return false;
+    const rect = node.getBoundingClientRect();
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom
+    );
+  }
+
+  function clearDockDropTargets() {
+    el.untimedSection?.classList.remove("is-drop-target");
+    el.backlogSection?.classList.remove("is-drop-target");
+  }
+
   function syncDockDragState(sourceEl, ghostRef, ev, clientX, clientY) {
     const timelineRect = el.timelineScroll?.getBoundingClientRect();
     const dockRect = el.stagingDock?.getBoundingClientRect();
-    const isOverDock = Boolean(
-      dockRect &&
-        dockRect.width > 0 &&
-        dockRect.height > 0 &&
-        clientX >= dockRect.left &&
-        clientX <= dockRect.right &&
-        clientY >= dockRect.top &&
-        clientY <= dockRect.bottom
-    );
+    const isOverDock = isPointInElRect(el.stagingDock, clientX, clientY);
+    const isOverBacklog = isOverDock && isPointInElRect(el.backlogSection, clientX, clientY);
+    const dockDropTarget = isOverBacklog ? "backlog" : isOverDock ? "untimed" : null;
     const isLeavingTimeline = Boolean(
       isOverDock || (timelineRect && dockRect && dockRect.width > 0 && clientX < timelineRect.left)
     );
 
-    el.stagingDock?.classList.toggle("drop-active", isOverDock);
+    el.stagingDock?.classList.toggle("drop-active", dockDropTarget === "untimed");
+    el.backlogSection?.classList.toggle("is-drop-target", dockDropTarget === "backlog");
     sourceEl?.classList.toggle("is-unscheduling", isLeavingTimeline);
 
     if (isLeavingTimeline) {
@@ -2254,6 +2302,10 @@
         document.body.appendChild(ghost);
         ghostRef.current = ghost;
       }
+      const iconEl = ghostRef.current.querySelector(".dock-ghost-icon");
+      const subEl = ghostRef.current.querySelector(".dock-ghost-sub");
+      if (iconEl) iconEl.textContent = dockDropTarget === "backlog" ? "📦" : "📥";
+      if (subEl) subEl.textContent = dockDropTarget === "backlog" ? "나중에 할 일로" : "시간 미정으로";
       ghostRef.current.style.left = `${clientX}px`;
       ghostRef.current.style.top = `${clientY}px`;
       ghostRef.current.classList.toggle("is-over-dock", isOverDock);
@@ -2262,7 +2314,7 @@
       ghostRef.current = null;
     }
 
-    return { isOverDock, isLeavingTimeline };
+    return { isOverDock, isLeavingTimeline, dockDropTarget };
   }
 
   function clearDockDragState(sourceEl, ghostRef) {
@@ -2272,6 +2324,7 @@
     }
     sourceEl?.classList.remove("is-unscheduling");
     el.stagingDock?.classList.remove("drop-active");
+    clearDockDropTargets();
   }
 
   function bindReminderMarkerInteractions(marker, pill, ev) {
@@ -2421,7 +2474,7 @@
       let previewStart = origStart;
       let previewVisualEnd = ev.visualEndMin;
       let previewHasEnd = origHasEnd;
-      let droppingToDock = false;
+      let droppingToDock = null;
       const dockGhostRef = { current: null };
 
       activePointerDrag = true;
@@ -2449,14 +2502,14 @@
         const minBound = getTimelineMinBound();
 
         if (mode === "move") {
-          const { isOverDock, isLeavingTimeline } = syncDockDragState(
+          const { dockDropTarget, isLeavingTimeline } = syncDockDragState(
             block,
             dockGhostRef,
             ev,
             moveEvent.clientX,
             moveEvent.clientY
           );
-          droppingToDock = isOverDock;
+          droppingToDock = dockDropTarget;
 
           if (isLeavingTimeline) {
             previewStart = origStart;
@@ -2524,6 +2577,10 @@
           return;
         }
 
+        if (droppingToDock === "backlog") {
+          await moveItemBetweenDayAndBacklog(ev, null);
+          return;
+        }
         if (droppingToDock) {
           await commitScheduleTimeChange(ev, null, null, {
             customStartIso: null,
@@ -2785,7 +2842,7 @@
       const dropEnd = payload.durationMin > 0 ? Math.min(1440, dropStart + payload.durationMin) : null;
 
       try {
-        if (payload.kind === "untimed") {
+        if (payload.kind === "untimed" || payload.kind === "placed") {
           const item = schedules.find((s) => s.id === payload.id);
           if (item) await commitScheduleTimeChange(item, dropStart, dropEnd);
         } else if (payload.kind === "backlog") {
@@ -2822,6 +2879,74 @@
         }
       } catch (err) {
         showToast(`배치 실패: ${err.message}`);
+      }
+    });
+
+    bindDockDropZones();
+  }
+
+  function bindDockSectionDropZone(sectionEl, acceptKinds, onDropPayload) {
+    if (!sectionEl) return;
+
+    sectionEl.addEventListener("dragover", (e) => {
+      if (!activeHtmlDragPayload || !acceptKinds.includes(activeHtmlDragPayload.kind)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      sectionEl.classList.add("is-drop-target");
+    });
+
+    sectionEl.addEventListener("dragleave", (e) => {
+      if (!sectionEl.contains(e.relatedTarget)) {
+        sectionEl.classList.remove("is-drop-target");
+      }
+    });
+
+    sectionEl.addEventListener("drop", async (e) => {
+      let payload = activeHtmlDragPayload;
+      if (!payload) {
+        try {
+          payload = JSON.parse(e.dataTransfer?.getData("text/plain") || "");
+        } catch {
+          payload = null;
+        }
+      }
+      if (!payload || !acceptKinds.includes(payload.kind)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      clearDockDropTargets();
+      activeHtmlDragPayload = null;
+      el.ghostPreview?.classList.add("hidden");
+
+      try {
+        await onDropPayload(payload);
+      } catch (err) {
+        showToast(`이동 실패: ${err.message}`);
+      }
+    });
+  }
+
+  function bindDockDropZones() {
+    bindDockSectionDropZone(el.backlogSection, ["untimed", "placed"], async (payload) => {
+      const item = schedules.find((s) => s.id === payload.id);
+      if (item) await moveItemBetweenDayAndBacklog(item, null);
+    });
+
+    bindDockSectionDropZone(el.untimedSection, ["backlog", "placed"], async (payload) => {
+      if (payload.kind === "backlog") {
+        const item = backlogItems.find((b) => b.id === payload.id);
+        if (item) await moveItemBetweenDayAndBacklog(item, currentDate);
+        return;
+      }
+      if (payload.kind === "placed") {
+        const item = schedules.find((s) => s.id === payload.id);
+        if (item) {
+          await commitScheduleTimeChange(item, null, null, {
+            customStartIso: null,
+            customEndIso: null
+          });
+          showToast("미배치 목록으로 옮겼습니다.", "📥");
+        }
       }
     });
   }
