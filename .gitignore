@@ -1,6 +1,8 @@
 .env
 .env.*
 *.local
+*.local.js
+js/config.local.js
 *.secret*
 .DS_Store
 Thumbs.db
