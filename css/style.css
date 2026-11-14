@@ -3067,15 +3067,46 @@ html[data-theme="light"] .modal-backdrop {
   bottom: 18px;
   left: 50%;
   transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 24px);
   background: var(--surface-3);
   color: var(--text);
   border: 1px solid var(--accent);
-  padding: 8px 16px;
+  padding: 8px 14px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
   box-shadow: var(--shadow);
-  z-index: 200;
+  z-index: 250;
+}
+
+.toast.hidden {
+  display: none;
+}
+
+.toast-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast-action-btn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.toast-action-btn:hover {
+  opacity: 0.9;
 }
 
 /* 스크롤바 */

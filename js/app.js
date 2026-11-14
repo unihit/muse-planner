@@ -194,11 +194,30 @@
 
   /* -------------------- 유틸 -------------------- */
 
-  function showToast(msg, icon = "✨") {
-    el.toast.textContent = msg;
+  function showToast(msg, icon = "✨", options = {}) {
+    const { durationMs = 2800, action = null } = options;
+    el.toast.innerHTML = "";
+    const msgSpan = document.createElement("span");
+    msgSpan.className = "toast-msg";
+    msgSpan.textContent = msg;
+    el.toast.appendChild(msgSpan);
+
+    if (action && typeof action.onClick === "function") {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "toast-action-btn";
+      btn.textContent = action.label || "되돌리기";
+      btn.addEventListener("click", async () => {
+        clearTimeout(toastTimer);
+        el.toast.classList.add("hidden");
+        await action.onClick();
+      });
+      el.toast.appendChild(btn);
+    }
+
     el.toast.classList.remove("hidden");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.toast.classList.add("hidden"), 2800);
+    toastTimer = setTimeout(() => el.toast.classList.add("hidden"), durationMs);
 
     if (el.islandLiveToast && el.nowBanner) {
       el.islandLiveIcon.textContent = icon;
@@ -209,7 +228,7 @@
       islandNotifyTimer = setTimeout(() => {
         el.nowBanner.classList.remove("is-notify");
         el.islandLiveToast.classList.add("hidden");
-      }, 2400);
+      }, Math.min(durationMs, 3200));
     }
   }
 
@@ -222,9 +241,11 @@
   }
 
   function pushUndoAction(label, undoFn) {
-    undoStack.push({ label, undo: undoFn });
+    const entry = { label, undo: undoFn };
+    undoStack.push(entry);
     if (undoStack.length > 20) undoStack.shift();
     updateUndoButton();
+    return entry;
   }
 
   async function undoLastAction() {
@@ -749,7 +770,7 @@
       await PlannerAPI.deleteSchedule(id, targetDate);
       if (recordUndo && removed) {
         const snapshot = { ...removed };
-        pushUndoAction(`'${snapshot.title}' 삭제`, async () => {
+        const undoEntry = pushUndoAction(`'${snapshot.title}' 삭제`, async () => {
           const recreated = await PlannerAPI.createSchedule({
             date: snapshot.date,
             start_at: snapshot.start_at,
@@ -770,7 +791,25 @@
             await loadDay(finalRec.date, false);
           }
         });
-        showToast("일정을 삭제했습니다.", "🗑️");
+        showToast(`'${snapshot.title}' 삭제됨`, "🗑️", {
+          durationMs: 5500,
+          action: {
+            label: "되돌리기",
+            onClick: async () => {
+              const idx = undoStack.indexOf(undoEntry);
+              if (idx === -1) return;
+              undoStack.splice(idx, 1);
+              updateUndoButton();
+              try {
+                lastUserMutationAt = Date.now();
+                await undoEntry.undo();
+                showToast(`'${snapshot.title}' 복구됨`, "↩️");
+              } catch (err) {
+                showToast(`복구 실패: ${err.message}`, "⚠️");
+              }
+            }
+          }
+        });
       }
     } catch (err) {
       schedules = prevList;
