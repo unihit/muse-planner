@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Muse Elastic Planner — 일간 타임라인 플래너</title>
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-  <link rel="stylesheet" href="./css/style.css?v=20261114-14" />
+  <link rel="stylesheet" href="./css/style.css?v=20261114-15" />
 </head>
 <body>
   <!-- 로그인 화면 (가계부와 동일 Supabase Auth) -->
@@ -233,6 +233,9 @@
             </label>
             <button id="earlyToggleBtn" class="chip-btn subtle" title="새벽 00:00~07:00 접기/펼치기">
               🌙 새벽 접힘
+            </button>
+            <button id="openRoutinesBtn" class="chip-btn subtle" title="매일·요일별 반복 루틴 관리">
+              🔁 루틴
             </button>
             <button id="addEventBtn" class="chip-btn primary">+ 새 일정</button>
           </div>
@@ -596,7 +599,62 @@
           </div>
         </section>
 
-        <!-- 3. 빠른 블록 프리셋 관리 -->
+        <!-- 3. 매일 · 요일별 반복 루틴 -->
+        <section class="settings-section" id="settingsRoutineSection">
+          <div class="settings-section-head">
+            <h4>🔁 매일 · 요일별 반복 루틴</h4>
+            <button type="button" id="applyRoutinesNowBtn" class="btn-secondary btn-xs">현재 날짜에 반영</button>
+          </div>
+          <p class="api-note">
+            날짜를 열면 해당 요일에 맞는 루틴이 자동으로 채워집니다. 특정 날만 시간 수정·삭제를 해도 원래 루틴은 유지됩니다.
+          </p>
+          <div id="routineManageList" class="routine-manage-list"></div>
+          <form id="addRoutineForm" class="routine-add-form">
+            <div class="routine-form-row">
+              <input id="routineTitle" type="text" placeholder="루틴 이름 (예: 취침 준비, 홈트)" required />
+              <select id="routineType" aria-label="루틴 유형">
+                <option value="schedule">일정</option>
+                <option value="task">할 일</option>
+                <option value="reminder">알림</option>
+              </select>
+            </div>
+            <div class="routine-form-row">
+              <input id="routineTime" type="time" value="23:00" aria-label="시작 시각" />
+              <label class="inline-check-sm">
+                <input id="routineUntimedCheck" type="checkbox" />
+                <span>시간 미정</span>
+              </label>
+              <select id="routineDuration" aria-label="기본 길이">
+                <option value="0">시작만</option>
+                <option value="15">15분</option>
+                <option value="30" selected>30분</option>
+                <option value="45">45분</option>
+                <option value="60">1시간</option>
+                <option value="90">1시간 30분</option>
+                <option value="120">2시간</option>
+              </select>
+            </div>
+            <div id="routineWeekdayBar" class="routine-weekday-bar">
+              <div class="routine-weekday-presets">
+                <button type="button" class="btn-xs routine-day-preset" data-day-preset="all">매일</button>
+                <button type="button" class="btn-xs routine-day-preset" data-day-preset="weekdays">평일</button>
+                <button type="button" class="btn-xs routine-day-preset" data-day-preset="weekend">주말</button>
+              </div>
+              <div class="routine-weekday-chips">
+                <label class="weekday-chip"><input type="checkbox" value="1" checked /><span>월</span></label>
+                <label class="weekday-chip"><input type="checkbox" value="2" checked /><span>화</span></label>
+                <label class="weekday-chip"><input type="checkbox" value="3" checked /><span>수</span></label>
+                <label class="weekday-chip"><input type="checkbox" value="4" checked /><span>목</span></label>
+                <label class="weekday-chip"><input type="checkbox" value="5" checked /><span>금</span></label>
+                <label class="weekday-chip"><input type="checkbox" value="6" checked /><span>토</span></label>
+                <label class="weekday-chip"><input type="checkbox" value="0" checked /><span>일</span></label>
+              </div>
+              <button type="submit" class="btn-primary btn-xs">+ 루틴 추가</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- 4. 빠른 블록 프리셋 관리 -->
         <section class="settings-section" id="settingsPresetSection">
           <div class="settings-section-head">
             <h4>⚡ 빠른 블록 프리셋 관리</h4>
@@ -680,7 +738,7 @@
   <!-- 토스트 알림 -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./js/api.js?v=20261114-14"></script>
-  <script src="./js/app.js?v=20261114-14"></script>
+  <script src="./js/api.js?v=20261114-15"></script>
+  <script src="./js/app.js?v=20261114-15"></script>
 </body>
 </html>

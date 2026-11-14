@@ -94,6 +94,7 @@
 
     typeFilterBar: document.getElementById("typeFilterBar"),
     earlyToggleBtn: document.getElementById("earlyToggleBtn"),
+    openRoutinesBtn: document.getElementById("openRoutinesBtn"),
     addEventBtn: document.getElementById("addEventBtn"),
     presetList: document.getElementById("presetList"),
     editPresetsBtn: document.getElementById("editPresetsBtn"),
@@ -147,8 +148,18 @@
     settingsModalBody: document.getElementById("settingsModalBody"),
     settingsTimelineSection: document.getElementById("settingsTimelineSection"),
     settingsDisplaySection: document.getElementById("settingsDisplaySection"),
+    settingsRoutineSection: document.getElementById("settingsRoutineSection"),
     settingsPresetSection: document.getElementById("settingsPresetSection"),
     settingsAccountSection: document.getElementById("settingsAccountSection"),
+    applyRoutinesNowBtn: document.getElementById("applyRoutinesNowBtn"),
+    routineManageList: document.getElementById("routineManageList"),
+    addRoutineForm: document.getElementById("addRoutineForm"),
+    routineTitle: document.getElementById("routineTitle"),
+    routineType: document.getElementById("routineType"),
+    routineTime: document.getElementById("routineTime"),
+    routineUntimedCheck: document.getElementById("routineUntimedCheck"),
+    routineDuration: document.getElementById("routineDuration"),
+    routineWeekdayBar: document.getElementById("routineWeekdayBar"),
     snapSelect: document.getElementById("snapSelect"),
     zoomRange: document.getElementById("zoomRange"),
     zoomValueLabel: document.getElementById("zoomValueLabel"),
@@ -487,7 +498,7 @@
     const targetDate = currentDate;
 
     try {
-      const fresh = await PlannerAPI.fetchSchedules(targetDate);
+      const fresh = await PlannerAPI.fetchSchedules(targetDate, { applyRoutines: false });
       if (targetDate !== currentDate || isAutoSyncPaused({ ignoreInFlight: true })) return;
 
       if (getScheduleSignature(fresh) !== getScheduleSignature(schedules)) {
@@ -1343,6 +1354,8 @@
         ev.type === "task" ? `<span class="badge-type">할 일</span>` : "";
       const srcBadge =
         ev.source === "muse" ? `<span class="badge-src is-muse">Muse</span>` : "";
+      const routineBadge =
+        ev.template_id ? `<span class="badge-routine" title="반복 루틴에서 자동 생성됨">🔁</span>` : "";
 
       block.innerHTML = `
         <div class="resize-handle top" title="위로 끌어 시작 시각 조절"></div>
@@ -1351,6 +1364,7 @@
           <span class="event-title">${escapeHtml(ev.title)}</span>
           <div class="event-badges">
             ${isNow ? `<span class="badge-now">NOW</span>` : ""}
+            ${routineBadge}
             ${reminderBadge}
             ${typeBadge}
             ${srcBadge}
@@ -2357,10 +2371,92 @@
     }
   }
 
+  const WEEKDAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
+
+  function formatWeekdaysLabel(days = []) {
+    const sorted = [...new Set(days.map(Number))].sort((a, b) => a - b);
+    if (sorted.length === 7) return "매일";
+    if (sorted.length === 5 && sorted.join(",") === "1,2,3,4,5") return "평일";
+    if (sorted.length === 2 && sorted.join(",") === "0,6") return "주말";
+    return sorted.map((d) => WEEKDAY_NAMES[d] || "").filter(Boolean).join("·");
+  }
+
+  async function loadAndRenderRoutines() {
+    if (!el.routineManageList) return;
+    const settings = PlannerAPI.getSettings();
+    if (settings.mode === "supabase" && !supabaseSession) {
+      el.routineManageList.innerHTML = `<div class="empty-hint">로그인 후 반복 루틴을 관리할 수 있습니다.</div>`;
+      return;
+    }
+
+    try {
+      const list = await PlannerAPI.fetchRoutineTemplates();
+      el.routineManageList.innerHTML = "";
+      if (!list.length) {
+        el.routineManageList.innerHTML = `<div class="empty-hint">등록된 반복 루틴이 없습니다. 아래에서 매일·요일별 루틴을 추가해 보세요.</div>`;
+        return;
+      }
+
+      for (const rt of list) {
+        const row = document.createElement("div");
+        row.className = `routine-manage-item ${rt.enabled ? "" : "is-disabled"}`;
+        const timeStr = rt.start_time ? `${rt.start_time}` : "시간 미정";
+        const durStr = rt.start_time && rt.duration_min > 0 ? ` · ${rt.duration_min}분` : rt.start_time ? " · 시작만" : "";
+        const dayStr = formatWeekdaysLabel(rt.weekdays);
+        const typeLabel = TYPE_META[rt.type]?.label || "일정";
+
+        row.innerHTML = `
+          <label class="routine-item-toggle" title="루틴 활성화/비활성화">
+            <input type="checkbox" class="routine-enable-cb" ${rt.enabled ? "checked" : ""} />
+          </label>
+          <div class="routine-item-info">
+            <div class="routine-item-title">${escapeHtml(rt.title)}</div>
+            <div class="routine-item-meta">
+              <span class="routine-day-badge">${escapeHtml(dayStr)}</span>
+              <span>${escapeHtml(timeStr + durStr)} · ${escapeHtml(typeLabel)}</span>
+            </div>
+          </div>
+          <button type="button" class="mini-btn del" title="루틴 삭제">✕</button>
+        `;
+
+        row.querySelector(".routine-enable-cb").addEventListener("change", async (e) => {
+          const enabled = e.target.checked;
+          try {
+            await PlannerAPI.patchRoutineTemplate(rt.id, { enabled });
+            row.classList.toggle("is-disabled", !enabled);
+            if (enabled) {
+              const added = await PlannerAPI.applyRoutinesForDate(currentDate);
+              if (added > 0) await loadDay(currentDate, false);
+            }
+            showToast(enabled ? "루틴을 활성화했습니다." : "루틴을 일시 중지했습니다.");
+          } catch (err) {
+            e.target.checked = !enabled;
+            showToast(`루틴 변경 실패: ${err.message}`, "⚠️");
+          }
+        });
+
+        row.querySelector(".del").addEventListener("click", async () => {
+          try {
+            await PlannerAPI.deleteRoutineTemplate(rt.id);
+            await loadAndRenderRoutines();
+            showToast(`'${rt.title}' 루틴을 삭제했습니다.`);
+          } catch (err) {
+            showToast(`루틴 삭제 실패: ${err.message}`, "⚠️");
+          }
+        });
+
+        el.routineManageList.appendChild(row);
+      }
+    } catch (err) {
+      el.routineManageList.innerHTML = `<div class="empty-hint">루틴 목록 조회 실패: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
   function openApiSettingsModal(scrollSectionEl = null) {
     updateSupabaseAuthUi();
     renderPresetManager();
     applyPrefsToUI();
+    loadAndRenderRoutines();
     el.apiModal.classList.remove("hidden");
     requestAnimationFrame(() => {
       if (scrollSectionEl && typeof scrollSectionEl.scrollIntoView === "function") {
@@ -2429,6 +2525,84 @@
       prefs.earlyCollapsed = !prefs.earlyCollapsed;
       PlannerAPI.savePrefs(prefs);
       renderAll();
+    });
+
+    el.openRoutinesBtn?.addEventListener("click", () => {
+      openApiSettingsModal(el.settingsRoutineSection);
+    });
+
+    el.routineUntimedCheck?.addEventListener("change", (e) => {
+      if (el.routineTime) el.routineTime.disabled = e.target.checked;
+      if (el.routineDuration) el.routineDuration.disabled = e.target.checked;
+    });
+
+    el.routineWeekdayBar?.querySelectorAll("[data-day-preset]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const kind = btn.dataset.dayPreset;
+        const target =
+          kind === "weekdays"
+            ? [1, 2, 3, 4, 5]
+            : kind === "weekend"
+              ? [0, 6]
+              : [0, 1, 2, 3, 4, 5, 6];
+        el.routineWeekdayBar.querySelectorAll('.routine-weekday-chips input[type="checkbox"]').forEach((cb) => {
+          cb.checked = target.includes(Number(cb.value));
+        });
+      });
+    });
+
+    el.addRoutineForm?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const title = el.routineTitle.value.trim();
+      if (!title) return;
+
+      const weekdays = [...el.routineWeekdayBar.querySelectorAll('.routine-weekday-chips input[type="checkbox"]:checked')].map(
+        (cb) => Number(cb.value)
+      );
+      if (!weekdays.length) {
+        showToast("반복할 요일을 1개 이상 선택해 주세요.", "⚠️");
+        return;
+      }
+
+      const untimed = Boolean(el.routineUntimedCheck?.checked);
+      const startTime = untimed ? null : el.routineTime?.value || null;
+      const durationMin = untimed ? 0 : Number(el.routineDuration?.value ?? 30);
+
+      try {
+        await PlannerAPI.createRoutineTemplate({
+          title,
+          type: el.routineType?.value || "schedule",
+          start_time: startTime,
+          duration_min: durationMin,
+          weekdays,
+          enabled: true
+        });
+        el.routineTitle.value = "";
+        await loadAndRenderRoutines();
+        const applied = await PlannerAPI.applyRoutinesForDate(currentDate);
+        if (applied > 0) {
+          await loadDay(currentDate, false);
+          showToast(`루틴 '${title}'을(를) 추가하고 현재 날짜에도 바로 반영했습니다.`, "🔁");
+        } else {
+          showToast(`루틴 '${title}'을(를) 추가했습니다.`, "🔁");
+        }
+      } catch (err) {
+        showToast(`루틴 추가 실패: ${err.message}`, "⚠️");
+      }
+    });
+
+    el.applyRoutinesNowBtn?.addEventListener("click", async () => {
+      try {
+        const added = await PlannerAPI.applyRoutinesForDate(currentDate);
+        if (added > 0) {
+          await loadDay(currentDate, false);
+          showToast(`현재 날짜(${currentDate})에 루틴 ${added}건을 반영했습니다.`, "🔁");
+        } else {
+          showToast("현재 날짜에 새로 반영할 루틴이 없습니다.");
+        }
+      } catch (err) {
+        showToast(`루틴 반영 실패: ${err.message}`, "⚠️");
+      }
     });
 
     el.themeSelect?.addEventListener("change", (e) => {

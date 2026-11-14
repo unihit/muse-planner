@@ -17,7 +17,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const SCHEDULE_TYPES = ['schedule', 'task', 'reminder'] as const
 const SCHEDULE_SOURCES = ['muse', 'app'] as const
 const SCHEDULE_SELECT =
-  'id, date, start_at, end_at, title, type, done, done_at, source, memo, created_at, updated_at'
+  'id, date, start_at, end_at, title, type, done, done_at, source, memo, template_id, created_at, updated_at'
 const REALTIME_CHANNEL = 'muse-schedules'
 const REALTIME_EVENT = 'schedules_changed'
 
@@ -318,6 +318,7 @@ function toApiSchedule(row: Record<string, unknown>) {
     done_at: toKstIsoString(row.done_at),
     source: row.source,
     memo: row.memo ?? null,
+    template_id: row.template_id ?? null,
     created_at: toKstIsoString(row.created_at),
     updated_at: toKstIsoString(row.updated_at),
   }
@@ -428,6 +429,12 @@ async function listSchedules(req: Request) {
       'date는 YYYY-MM-DD 형식이어야 합니다.',
       { date: 'date는 YYYY-MM-DD 형식이어야 합니다.' },
     )
+  }
+
+  try {
+    await db().rpc('apply_routines_for_date', { target_date: targetDate })
+  } catch {
+    // 루틴 자동 채우기 실패 시에도 기본 조회는 계속 진행
   }
 
   const { data, error } = await db()

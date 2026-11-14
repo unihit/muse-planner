@@ -13,13 +13,15 @@
   const AGENT_CACHE_PREFIX = "muse_planner_agent_cache_v2_";
   const WIDGETS_STORAGE_PREFIX = "muse_planner_widgets_v2_";
   const PREFS_KEY = "muse_planner_ui_prefs_v2";
+  const ROUTINE_TEMPLATES_KEY = "muse_planner_routine_templates_v2";
+  const ROUTINE_APPLIED_PREFIX = "muse_planner_routine_applied_v2_";
 
   const KST_TIMEZONE = "Asia/Seoul";
   const SUPABASE_DEFAULT_URL = "https://vetwwxmujaiwwwpjurpr.supabase.co";
   const SUPABASE_DEFAULT_ANON_KEY =
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZldHd3eG11amFpd3d3cGp1cnByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMwOTQxNDEsImV4cCI6MjEwODY3MDE0MX0.XYxgyeN-vWZ5MDtJGG4hJaIdNH29L1eFQNnCivoXr6M";
   const SCHEDULE_COLUMNS =
-    "id, date, start_at, end_at, title, type, done, done_at, source, memo, created_at, updated_at";
+    "id, date, start_at, end_at, title, type, done, done_at, source, memo, template_id, created_at, updated_at";
 
   const DEFAULT_SETTINGS = {
     mode: "supabase", // 'supabase' | 'agent' | 'local'
@@ -339,6 +341,7 @@
       done: Boolean(raw.done),
       done_at: raw.done_at || null,
       memo: raw.memo ?? "",
+      template_id: raw.template_id ?? null,
       start_at: raw.start_at || (hasStartAt ? kstMinutesToIso(dateStr, startMin) : null),
       end_at: raw.end_at || (hasEndAt ? kstMinutesToIso(dateStr, endMin) : null),
       hasStartAt,
@@ -622,10 +625,18 @@
     }
   }
 
-  async function fetchSchedules(dateStr) {
+  async function fetchSchedules(dateStr, options = {}) {
+    const { applyRoutines = true } = options;
     const settings = getSettings();
     if (settings.mode === "supabase") {
       await requireSupabaseSession();
+      if (applyRoutines) {
+        try {
+          await applyRoutinesForDate(dateStr);
+        } catch {
+          // 루틴 적용 실패 시에도 기존 일정 조회는 유지
+        }
+      }
       const sb = await getSupabaseClient();
       const { data, error } = await sb
         .from("schedules")
@@ -647,6 +658,9 @@
       );
       setCachedSchedules(dateStr, normalized);
       return normalized;
+    }
+    if (applyRoutines) {
+      applyLocalRoutinesForDate(dateStr);
     }
     return loadLocalSchedules(dateStr);
   }
@@ -840,6 +854,240 @@
     saveLocalSchedules(dateStr, list);
   }
 
+  /* -------------------- 반복 루틴 템플릿 CRUD & 날짜별 적용 -------------------- */
+
+  const ROUTINE_COLUMNS =
+    "id, title, type, start_time, duration_min, weekdays, memo, enabled, created_at, updated_at";
+
+  function getKstWeekday(dateStr) {
+    return new Date(`${dateStr}T12:00:00Z`).getUTCDay();
+  }
+
+  function normalizeWeekdays(raw) {
+    if (!Array.isArray(raw)) return [0, 1, 2, 3, 4, 5, 6];
+    const clean = [...new Set(raw.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort(
+      (a, b) => a - b
+    );
+    return clean.length ? clean : [0, 1, 2, 3, 4, 5, 6];
+  }
+
+  function normalizeRoutineTemplate(raw) {
+    const startTimeRaw = typeof raw?.start_time === "string" ? raw.start_time.trim() : "";
+    const startTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(startTimeRaw) ? startTimeRaw : null;
+    return {
+      id: raw?.id || uid("rt"),
+      title: String(raw?.title || "").trim() || "(루틴)",
+      type: ["schedule", "task", "reminder"].includes(raw?.type) ? raw.type : "schedule",
+      start_time: startTime,
+      duration_min: clampInt(raw?.duration_min, 0, 1440, 30),
+      weekdays: normalizeWeekdays(raw?.weekdays),
+      memo: raw?.memo ?? "",
+      enabled: raw?.enabled !== false,
+      created_at: raw?.created_at || null,
+      updated_at: raw?.updated_at || null
+    };
+  }
+
+  function loadLocalRoutines() {
+    try {
+      const raw = localStorage.getItem(ROUTINE_TEMPLATES_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(normalizeRoutineTemplate) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveLocalRoutines(list) {
+    localStorage.setItem(ROUTINE_TEMPLATES_KEY, JSON.stringify(list));
+  }
+
+  function applyLocalRoutinesForDate(dateStr) {
+    const templates = loadLocalRoutines().filter((t) => t.enabled);
+    if (!templates.length) return 0;
+
+    let appliedIds = [];
+    try {
+      const raw = localStorage.getItem(ROUTINE_APPLIED_PREFIX + dateStr);
+      appliedIds = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(appliedIds)) appliedIds = [];
+    } catch {
+      appliedIds = [];
+    }
+
+    const appliedSet = new Set(appliedIds);
+    const dow = getKstWeekday(dateStr);
+    const dayList = loadLocalSchedules(dateStr);
+    let inserted = 0;
+
+    for (const tpl of templates) {
+      if (!tpl.weekdays.includes(dow)) continue;
+      if (appliedSet.has(tpl.id)) continue;
+
+      appliedSet.add(tpl.id);
+      const startMin = tpl.start_time ? hhmmToMinutes(tpl.start_time) : null;
+      const startAt = startMin !== null ? kstMinutesToIso(dateStr, startMin) : null;
+      const endAt =
+        startMin !== null && tpl.duration_min > 0
+          ? kstMinutesToIso(dateStr, startMin + tpl.duration_min)
+          : null;
+
+      dayList.push(
+        normalizeScheduleRecord(
+          {
+            id: uid("loc"),
+            date: dateStr,
+            start_at: startAt,
+            end_at: endAt,
+            title: tpl.title,
+            type: tpl.type,
+            done: false,
+            done_at: null,
+            source: "app",
+            memo: tpl.memo || "",
+            template_id: tpl.id,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          },
+          dateStr
+        )
+      );
+      inserted += 1;
+    }
+
+    localStorage.setItem(ROUTINE_APPLIED_PREFIX + dateStr, JSON.stringify([...appliedSet]));
+    if (inserted > 0) {
+      saveLocalSchedules(dateStr, dayList);
+    }
+    return inserted;
+  }
+
+  async function fetchRoutineTemplates() {
+    const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb
+        .from("routine_templates")
+        .select(ROUTINE_COLUMNS)
+        .order("start_time", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true });
+      if (error) throw new Error(error.message);
+      return (Array.isArray(data) ? data : []).map(normalizeRoutineTemplate);
+    }
+    return loadLocalRoutines();
+  }
+
+  async function createRoutineTemplate(payload) {
+    const clean = {
+      title: String(payload?.title || "").trim(),
+      type: ["schedule", "task", "reminder"].includes(payload?.type) ? payload.type : "schedule",
+      start_time:
+        typeof payload?.start_time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(payload.start_time.trim())
+          ? payload.start_time.trim()
+          : null,
+      duration_min: clampInt(payload?.duration_min, 0, 1440, 30),
+      weekdays: normalizeWeekdays(payload?.weekdays),
+      memo: payload?.memo ? String(payload.memo) : null,
+      enabled: payload?.enabled !== false
+    };
+
+    const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb
+        .from("routine_templates")
+        .insert(clean)
+        .select(ROUTINE_COLUMNS)
+        .single();
+      if (error) throw new Error(error.message);
+      return normalizeRoutineTemplate(data);
+    }
+
+    const list = loadLocalRoutines();
+    const created = normalizeRoutineTemplate({
+      id: uid("rt"),
+      ...clean,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    });
+    list.push(created);
+    saveLocalRoutines(list);
+    return created;
+  }
+
+  async function patchRoutineTemplate(id, patch) {
+    const updateBody = {};
+    if ("title" in patch) updateBody.title = String(patch.title || "").trim();
+    if ("type" in patch) updateBody.type = ["schedule", "task", "reminder"].includes(patch.type) ? patch.type : "schedule";
+    if ("start_time" in patch) {
+      updateBody.start_time =
+        typeof patch.start_time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(patch.start_time.trim())
+          ? patch.start_time.trim()
+          : null;
+    }
+    if ("duration_min" in patch) updateBody.duration_min = clampInt(patch.duration_min, 0, 1440, 30);
+    if ("weekdays" in patch) updateBody.weekdays = normalizeWeekdays(patch.weekdays);
+    if ("memo" in patch) updateBody.memo = patch.memo ? String(patch.memo) : null;
+    if ("enabled" in patch) updateBody.enabled = Boolean(patch.enabled);
+
+    const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb
+        .from("routine_templates")
+        .update(updateBody)
+        .eq("id", id)
+        .select(ROUTINE_COLUMNS)
+        .single();
+      if (error) throw new Error(error.message);
+      return normalizeRoutineTemplate(data);
+    }
+
+    const list = loadLocalRoutines();
+    const idx = list.findIndex((t) => t.id === id);
+    if (idx === -1) throw new Error("루틴 템플릿을 찾을 수 없습니다.");
+    const updated = normalizeRoutineTemplate({
+      ...list[idx],
+      ...updateBody,
+      updated_at: new Date().toISOString()
+    });
+    list[idx] = updated;
+    saveLocalRoutines(list);
+    return updated;
+  }
+
+  async function deleteRoutineTemplate(id) {
+    const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { error } = await sb.from("routine_templates").delete().eq("id", id);
+      if (error) throw new Error(error.message);
+      return;
+    }
+
+    const list = loadLocalRoutines().filter((t) => t.id !== id);
+    saveLocalRoutines(list);
+  }
+
+  async function applyRoutinesForDate(dateStr) {
+    const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb.rpc("apply_routines_for_date", {
+        target_date: dateStr
+      });
+      if (error) throw new Error(error.message);
+      return Number(data) || 0;
+    }
+    return applyLocalRoutinesForDate(dateStr);
+  }
+
   async function seedTestSchedulesForDate(dateStr = "2026-11-14") {
     const existing = await fetchSchedules(dateStr);
     const existingSignatures = new Set(
@@ -903,6 +1151,11 @@
     createSchedule,
     patchSchedule,
     deleteSchedule,
+    fetchRoutineTemplates,
+    createRoutineTemplate,
+    patchRoutineTemplate,
+    deleteRoutineTemplate,
+    applyRoutinesForDate,
     seedTestSchedulesForDate
   };
 })(typeof window !== "undefined" ? window : globalThis);
