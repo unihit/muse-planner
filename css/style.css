@@ -2846,7 +2846,7 @@ html[data-theme="light"] .modal-backdrop {
   .app-shell {
     height: auto;
     min-height: 100vh;
-    padding-bottom: calc(74px + env(safe-area-inset-bottom));
+    padding-bottom: calc(118px + env(safe-area-inset-bottom));
   }
   .top-header {
     flex-direction: row;
@@ -2887,30 +2887,48 @@ html[data-theme="light"] .modal-backdrop {
   .now-banner,
   .now-banner.dynamic-island {
     position: fixed;
-    top: max(8px, env(safe-area-inset-top));
+    top: auto;
+    bottom: calc(64px + env(safe-area-inset-bottom));
     left: 50%;
     transform: translateX(-50%);
     z-index: 220;
     flex: 0 0 auto;
-    width: auto;
-    max-width: min(300px, calc(100vw - 24px));
-    min-width: 180px;
-    padding: 3px 10px;
+    width: calc(100vw - 24px);
+    max-width: 440px;
+    min-width: 0;
+    padding: 5px 12px;
+  }
+  .now-banner.dynamic-island::after {
+    display: none;
   }
   .now-banner.dynamic-island.is-expanded {
     z-index: 240;
     transform: translateX(-50%) scale(1.015);
   }
+  .now-banner.dynamic-island .island-expanded {
+    top: auto;
+    bottom: calc(100% + 10px);
+    transform: translateX(calc(-50% + var(--island-offset-x, 0px))) translateY(8px) scale(0.94);
+  }
+  .now-banner.dynamic-island.is-expanded .island-expanded {
+    transform: translateX(calc(-50% + var(--island-offset-x, 0px))) translateY(0) scale(1);
+  }
+  .now-banner.dynamic-island .island-chevron {
+    transform: rotate(180deg);
+  }
+  .now-banner.dynamic-island.is-expanded .island-chevron {
+    transform: rotate(0deg);
+  }
   .now-banner.dynamic-island.is-notify {
     max-width: calc(100vw - 24px);
   }
   .now-banner.dynamic-island .island-compact {
-    min-height: 22px;
-    gap: 6px;
+    min-height: 24px;
+    gap: 7px;
   }
   .now-banner.dynamic-island .now-badge-wrap {
-    padding: 1px 6px;
-    font-size: 9px;
+    padding: 2px 7px;
+    font-size: 9.5px;
     gap: 4px;
   }
   .now-banner.dynamic-island .pulse-dot {
@@ -2919,15 +2937,15 @@ html[data-theme="light"] .modal-backdrop {
   }
   .now-banner.dynamic-island .island-ring-wrap,
   .now-banner.dynamic-island .island-ring {
-    width: 16px;
-    height: 16px;
+    width: 17px;
+    height: 17px;
   }
   .now-banner.dynamic-island .now-title {
-    font-size: 11px;
-    max-width: 150px;
+    font-size: 11.5px;
+    max-width: none;
   }
   .now-banner.dynamic-island .now-remaining {
-    font-size: 10px;
+    font-size: 10.5px;
   }
   .now-banner.dynamic-island .island-chevron {
     font-size: 9px;
@@ -3028,9 +3046,9 @@ html[data-theme="light"] .modal-backdrop {
     place-items: center;
     position: fixed;
     right: 16px;
-    bottom: calc(68px + env(safe-area-inset-bottom));
-    width: 48px;
-    height: 48px;
+    bottom: calc(114px + env(safe-area-inset-bottom));
+    width: 46px;
+    height: 46px;
     border-radius: 999px;
     background: linear-gradient(135deg, #6366f1, #8b5cf6);
     color: #fff;
@@ -3042,7 +3060,7 @@ html[data-theme="light"] .modal-backdrop {
     transform: scale(0.93);
   }
   .toast {
-    bottom: calc(74px + env(safe-area-inset-bottom));
+    bottom: calc(118px + env(safe-area-inset-bottom));
   }
 }
 
