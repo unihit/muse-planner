@@ -1359,6 +1359,42 @@ html[data-theme="light"] .reminder-pill-time {
   gap: 6px;
 }
 
+.section-collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border-radius: 6px;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.section-collapse-toggle:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.section-chevron {
+  font-size: 11px;
+  line-height: 1;
+  transition: transform 0.16s ease;
+}
+
+.dock-section.is-collapsed .section-chevron {
+  transform: rotate(-90deg);
+}
+
+.dock-section.is-collapsed .card-stack {
+  display: none;
+}
+
+.dock-section.is-collapsed .section-title-row {
+  margin-bottom: 0;
+}
+
 .placed-filter-btn.is-active {
   background: var(--accent-soft);
   color: var(--accent-hover);

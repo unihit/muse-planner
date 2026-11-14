@@ -97,6 +97,7 @@
     untimedCount: document.getElementById("untimedCount"),
     untimedList: document.getElementById("untimedList"),
     placedSection: document.getElementById("placedSection"),
+    placedCollapseBtn: document.getElementById("placedCollapseBtn"),
     placedCount: document.getElementById("placedCount"),
     placedList: document.getElementById("placedList"),
     placedTasksOnlyBtn: document.getElementById("placedTasksOnlyBtn"),
@@ -1275,7 +1276,13 @@
     if (el.dimCompletedCheck) el.dimCompletedCheck.checked = prefs.dimCompleted !== false;
     if (el.browserNotifyCheck) el.browserNotifyCheck.checked = Boolean(prefs.browserNotify);
     if (el.showPlacedListCheck) el.showPlacedListCheck.checked = prefs.showPlacedList !== false;
-    if (el.placedSection) el.placedSection.classList.toggle("hidden", prefs.showPlacedList === false);
+    if (el.placedSection) {
+      el.placedSection.classList.toggle("hidden", prefs.showPlacedList === false);
+      el.placedSection.classList.toggle("is-collapsed", Boolean(prefs.placedCollapsed));
+    }
+    if (el.placedCollapseBtn) {
+      el.placedCollapseBtn.setAttribute("aria-expanded", String(!prefs.placedCollapsed));
+    }
     if (el.placedTasksOnlyBtn) el.placedTasksOnlyBtn.classList.toggle("is-active", Boolean(prefs.placedTasksOnly));
 
     if (el.earlyToggleBtn) {
@@ -3427,6 +3434,12 @@
       applyPrefsToUI();
       renderAll();
       showToast(prefs.showPlacedList ? "좌측 배치 목록을 표시합니다." : "좌측 배치 목록을 숨겼습니다.");
+    });
+
+    el.placedCollapseBtn?.addEventListener("click", () => {
+      prefs.placedCollapsed = !prefs.placedCollapsed;
+      PlannerAPI.savePrefs(prefs);
+      applyPrefsToUI();
     });
 
     el.placedTasksOnlyBtn?.addEventListener("click", () => {

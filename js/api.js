@@ -43,6 +43,7 @@
     browserNotify: false,
     showPlacedList: true,
     placedTasksOnly: false,
+    placedCollapsed: false,
     widgets: {
       summary: true,
       youtube: true,
@@ -278,6 +279,7 @@
         browserNotify: typeof parsed.browserNotify === "boolean" ? parsed.browserNotify : DEFAULT_PREFS.browserNotify,
         showPlacedList: typeof parsed.showPlacedList === "boolean" ? parsed.showPlacedList : DEFAULT_PREFS.showPlacedList,
         placedTasksOnly: typeof parsed.placedTasksOnly === "boolean" ? parsed.placedTasksOnly : DEFAULT_PREFS.placedTasksOnly,
+        placedCollapsed: typeof parsed.placedCollapsed === "boolean" ? parsed.placedCollapsed : DEFAULT_PREFS.placedCollapsed,
         widgets: { ...DEFAULT_PREFS.widgets, ...(parsed.widgets || {}) },
         presets: Array.isArray(parsed.presets) && parsed.presets.length ? parsed.presets : structuredCloneSafe(DEFAULT_PREFS.presets)
       };
