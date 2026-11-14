@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Muse Elastic Planner — 커스텀 인터랙티브 일정 관리</title>
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- 상단 컨트롤 & 지금 하는 일(Now Playing) 헤더 -->
+    <header class="top-header">
+      <div class="header-left">
+        <div class="brand">
+          <span class="brand-logo">◈</span>
+          <div class="brand-text">
+            <h1>Muse Planner</h1>
+            <span class="brand-sub">Elastic Timebox</span>
+          </div>
+        </div>
+
+        <div class="date-nav">
+          <button id="prevDayBtn" class="icon-btn" title="이전 날짜">◀</button>
+          <input id="datePicker" type="date" class="date-input" aria-label="날짜 선택" />
+          <button id="todayBtn" class="chip-btn">오늘</button>
+          <button id="nextDayBtn" class="icon-btn" title="다음 날짜">▶</button>
+        </div>
+      </div>
+
+      <!-- 지금 하는 일 실시간 하이라이트 배너 -->
+      <div id="nowBanner" class="now-banner">
+        <div class="now-badge-wrap">
+          <span id="nowPulseDot" class="pulse-dot"></span>
+          <span id="nowBannerLabel" class="now-label">NOW</span>
+        </div>
+        <div class="now-info">
+          <div id="nowEventTitle" class="now-title">일정을 불러오는 중...</div>
+          <div class="now-meta-row">
+            <span id="nowEventTime" class="now-time">--:-- ~ --:--</span>
+            <div class="now-progress-track">
+              <div id="nowProgressBar" class="now-progress-bar" style="width: 0%"></div>
+            </div>
+            <span id="nowRemaining" class="now-remaining"></span>
+          </div>
+        </div>
+        <div class="now-actions">
+          <button id="nowExtendBtn" class="chip-btn subtle hidden" title="현재 일정 +15분">+15m</button>
+          <button id="nowDoneBtn" class="chip-btn primary hidden" title="현재 일정 완료 체크">✓ 완료</button>
+        </div>
+      </div>
+
+      <!-- 우측 툴바 -->
+      <div class="header-right">
+        <label class="control-pill" title="드래그 & 리사이즈 스냅 단위">
+          <span>스냅</span>
+          <select id="snapSelect">
+            <option value="5">5분</option>
+            <option value="10">10분</option>
+            <option value="15" selected>15분</option>
+            <option value="30">30분</option>
+          </select>
+        </label>
+
+        <label class="control-pill" title="타임라인 높이(줌) 조절">
+          <span>줌</span>
+          <input id="zoomRange" type="range" min="1.0" max="2.4" step="0.2" value="1.4" />
+        </label>
+
+        <button id="cascadeToggleBtn" class="toggle-btn active" title="앞 일정을 늘리면 뒤 일정도 자동으로 밀기">
+          <span class="dot"></span> 연쇄 밀기
+        </button>
+
+        <button id="reflowBtn" class="action-btn" title="미완료 지난 일정을 현재 시각 기준으로 재정렬">
+          ⚡ 지금부터 재정렬
+        </button>
+
+        <button id="undoBtn" class="icon-btn" title="실행 취소 (Ctrl+Z)" disabled>↩</button>
+        <button id="themeToggleBtn" class="chip-btn subtle" title="다크/라이트 테마 전환">☀️ 라이트</button>
+        <button id="syncNowBtn" class="icon-btn" title="데이터 소스 새로고침">↻</button>
+        <button id="openApiModalBtn" class="api-pill" title="Google Calendar / GAS / Supabase 연동 설정">
+          <span id="apiSourceDot" class="source-dot local"></span>
+          <span id="apiSourceLabel">로컬 모드</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 3단 Single-Viewport 메인 대시보드 -->
+    <main class="workspace-grid">
+      <!-- 1. 좌측 패널: Staging Dock (미배치 할 일 & 보류된 일정) -->
+      <aside id="stagingDock" class="panel left-panel">
+        <div class="panel-header">
+          <div>
+            <h2>📥 대기 & 보류 도크</h2>
+            <p class="panel-desc">타임라인으로 드래그해 시간 배치</p>
+          </div>
+          <span id="stagedCountBadge" class="count-badge">0</span>
+        </div>
+
+        <form id="addStagedForm" class="quick-add-box">
+          <input id="newStagedTitle" type="text" placeholder="할 일 빠르게 추가 (Enter)..." required />
+          <div class="quick-add-row">
+            <select id="newStagedDuration" aria-label="예상 시간">
+              <option value="15">15분</option>
+              <option value="30" selected>30분</option>
+              <option value="45">45분</option>
+              <option value="60">60분</option>
+              <option value="90">90분</option>
+            </select>
+            <select id="newStagedCategory" aria-label="카테고리">
+              <option value="focus">집중</option>
+              <option value="meeting">미팅</option>
+              <option value="personal">개인</option>
+              <option value="youtube">유튜브</option>
+              <option value="break">휴식</option>
+            </select>
+            <button type="submit" class="btn-add-sm">+ 추가</button>
+          </div>
+        </form>
+
+        <div class="dock-drop-hint" id="dockDropHint">
+          여기에 놓으면 타임라인에서 빼서 <strong>보류함</strong>에 보관합니다
+        </div>
+
+        <div class="panel-scroll">
+          <section class="dock-section">
+            <div class="section-title-row">
+              <span>⏸️ 잠시 빼둔 일정</span>
+              <span id="deferredCount" class="mini-count">0</span>
+            </div>
+            <div id="deferredList" class="card-stack"></div>
+          </section>
+
+          <section class="dock-section">
+            <div class="section-title-row">
+              <span>📌 미배치 할 일</span>
+              <span id="todoCount" class="mini-count">0</span>
+            </div>
+            <div id="todoList" class="card-stack"></div>
+          </section>
+        </div>
+      </aside>
+
+      <!-- 2. 중앙 패널: 인터랙티브 타임라인 캔버스 -->
+      <section class="panel center-panel">
+        <div class="timeline-toolbar">
+          <div class="filter-chips" id="categoryFilterBar">
+            <button class="filter-chip active" data-cat="all">전체</button>
+            <button class="filter-chip" data-cat="focus"><span class="cat-dot focus"></span>집중</button>
+            <button class="filter-chip" data-cat="meeting"><span class="cat-dot meeting"></span>미팅</button>
+            <button class="filter-chip" data-cat="personal"><span class="cat-dot personal"></span>개인</button>
+            <button class="filter-chip" data-cat="youtube"><span class="cat-dot youtube"></span>유튜브</button>
+            <button class="filter-chip" data-cat="break"><span class="cat-dot break"></span>휴식</button>
+          </div>
+
+          <div class="timeline-toolbar-right">
+            <button id="earlyToggleBtn" class="chip-btn subtle" title="새벽 00:00~07:00 접기/펼치기">
+              🌙 새벽 접힘
+            </button>
+            <button id="addEventBtn" class="chip-btn primary">+ 새 일정</button>
+          </div>
+        </div>
+
+        <!-- 빠른 프리셋 바 (클릭 또는 드래그로 생성) -->
+        <div class="preset-bar">
+          <span class="preset-label">빠른 블록:</span>
+          <div id="presetList" class="preset-list"></div>
+          <button id="editPresetsBtn" class="preset-add-btn" title="커스텀 블록 프리셋 추가/편집">+ 커스텀</button>
+        </div>
+
+        <!-- 스크롤 가능한 타임 캔버스 -->
+        <div id="timelineScroll" class="timeline-scroll">
+          <div id="timelineGrid" class="timeline-grid">
+            <!-- 시간 눈금 레이어 -->
+            <div id="hourRowsLayer" class="hour-rows-layer"></div>
+            <!-- 빈 시간 드래그 생성 / 드롭 프리뷰 -->
+            <div id="ghostPreview" class="ghost-preview hidden"></div>
+            <!-- 현재 시각 선 (Now Line) -->
+            <div id="nowLine" class="now-line">
+              <span id="nowLineBadge" class="now-line-badge">11:49</span>
+            </div>
+            <!-- 일정 블록 레이어 -->
+            <div id="eventsLayer" class="events-layer"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. 우측 패널: 커스텀 위젯 슬롯 -->
+      <aside class="panel right-panel">
+        <div class="panel-header">
+          <div>
+            <h2>🧩 커스텀 위젯</h2>
+            <p class="panel-desc">원하는 모듈만 켜고 끌 수 있습니다</p>
+          </div>
+          <button id="widgetConfigBtn" class="chip-btn subtle">🎛️ 설정</button>
+        </div>
+
+        <!-- 위젯 토글 팝오버 -->
+        <div id="widgetConfigMenu" class="widget-config-menu hidden">
+          <label><input type="checkbox" data-widget="summary" checked /> 📊 오늘 시간 요약</label>
+          <label><input type="checkbox" data-widget="youtube" checked /> 📺 유튜브 볼 리스트</label>
+          <label><input type="checkbox" data-widget="memo" checked /> 📝 퀵 스크래치패드</label>
+        </div>
+
+        <div class="panel-scroll right-widgets">
+          <!-- 위젯 1: 오늘 시간 요약 -->
+          <section id="widget-summary" class="widget-card">
+            <div class="widget-header">
+              <h3>📊 오늘 진행률 & 시간 배분</h3>
+              <span id="completionPercent" class="highlight-stat">0%</span>
+            </div>
+            <div class="summary-stats">
+              <div class="stat-box">
+                <span class="stat-label">총 배치</span>
+                <strong id="statTotalHours">0.0h</strong>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">완료됨</span>
+                <strong id="statDoneHours">0.0h</strong>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">남은 일정</span>
+                <strong id="statRemainingCount">0개</strong>
+              </div>
+            </div>
+            <div id="categoryBars" class="category-bars"></div>
+          </section>
+
+          <!-- 위젯 2: 유튜브 볼 리스트 (커스텀 필드 예시) -->
+          <section id="widget-youtube" class="widget-card">
+            <div class="widget-header">
+              <h3>📺 유튜브 볼 리스트</h3>
+              <span id="ytCountBadge" class="mini-count">0</span>
+            </div>
+            <p class="widget-hint">카드를 타임라인으로 드래그해 시청 시간을 잡으세요</p>
+            <form id="addYoutubeForm" class="yt-add-form">
+              <input id="newYtTitle" type="text" placeholder="영상 제목..." required />
+              <div class="yt-add-row">
+                <input id="newYtUrl" type="url" placeholder="https://youtube.com/... (선택)" />
+                <select id="newYtDuration" aria-label="영상 길이">
+                  <option value="15">15분</option>
+                  <option value="30" selected>30분</option>
+                  <option value="45">45분</option>
+                  <option value="60">60분</option>
+                </select>
+                <button type="submit" class="btn-add-sm">+</button>
+              </div>
+            </form>
+            <div id="youtubeList" class="yt-list"></div>
+          </section>
+
+          <!-- 위젯 3: 빠른 메모 -->
+          <section id="widget-memo" class="widget-card">
+            <div class="widget-header">
+              <h3>📝 퀵 스크래치패드</h3>
+              <span id="memoSavedHint" class="saved-hint">자동 저장</span>
+            </div>
+            <textarea id="dailyMemo" rows="5" placeholder="오늘의 회고, 급한 메모, Muse에게 시킬 일 등을 자유롭게 적으세요..."></textarea>
+          </section>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- 일정 생성 / 세부 수정 모달 -->
+  <div id="eventModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="eventModalTitle">일정 편집</h3>
+        <button class="modal-close" data-close="eventModal">✕</button>
+      </div>
+      <form id="eventForm" class="modal-body">
+        <input type="hidden" id="editEventId" />
+        <label class="field">
+          <span>제목</span>
+          <input id="editTitle" type="text" required placeholder="무엇을 하나요?" />
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>시작 시간</span>
+            <input id="editStart" type="time" required />
+          </label>
+          <label class="field">
+            <span>종료 시간</span>
+            <input id="editEnd" type="time" required />
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span>카테고리</span>
+            <select id="editCategory">
+              <option value="focus">🔥 집중 (Deep Work)</option>
+              <option value="meeting">💬 미팅 / 협업</option>
+              <option value="personal">🌿 개인 / 루틴</option>
+              <option value="youtube">📺 유튜브 / 학습</option>
+              <option value="break">☕ 휴식 / 이동</option>
+            </select>
+          </label>
+          <label class="field checkbox-field">
+            <span>옵션</span>
+            <div class="checkbox-group">
+              <label><input id="editPinned" type="checkbox" /> 🔒 시간 고정 (밀기 제외)</label>
+              <label><input id="editDone" type="checkbox" /> ✅ 완료 처리</label>
+            </div>
+          </label>
+        </div>
+        <label class="field">
+          <span>관련 링크 URL (선택)</span>
+          <input id="editUrl" type="url" placeholder="https://..." />
+        </label>
+        <label class="field">
+          <span>메모</span>
+          <textarea id="editNote" rows="3" placeholder="체크리스트나 세부 메모..."></textarea>
+        </label>
+        <div class="modal-footer">
+          <button type="button" id="deleteEventModalBtn" class="btn-danger hidden">삭제</button>
+          <div class="footer-right">
+            <button type="button" class="btn-secondary" data-close="eventModal">취소</button>
+            <button type="submit" class="btn-primary">저장</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 커스텀 프리셋 추가 모달 -->
+  <div id="presetModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card modal-sm">
+      <div class="modal-header">
+        <h3>🎨 커스텀 빠른 블록 관리</h3>
+        <button class="modal-close" data-close="presetModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="presetManageList" class="preset-manage-list"></div>
+        <form id="addPresetForm" class="preset-add-form">
+          <input id="presetIcon" type="text" value="⚡" maxlength="2" class="icon-input" aria-label="아이콘" />
+          <input id="presetTitle" type="text" placeholder="블록 이름 (예: 영어 공부)" required />
+          <select id="presetDuration">
+            <option value="15">15분</option>
+            <option value="30" selected>30분</option>
+            <option value="45">45분</option>
+            <option value="60">60분</option>
+            <option value="90">90분</option>
+          </select>
+          <select id="presetCategory">
+            <option value="focus">집중</option>
+            <option value="meeting">미팅</option>
+            <option value="personal">개인</option>
+            <option value="youtube">유튜브</option>
+            <option value="break">휴식</option>
+          </select>
+          <button type="submit" class="btn-primary">추가</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- API 데이터 소스 설정 모달 -->
+  <div id="apiModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <h3>⚙️ 데이터 소스 & Muse API 연동 설정</h3>
+        <button class="modal-close" data-close="apiModal">✕</button>
+      </div>
+      <form id="apiSettingsForm" class="modal-body">
+        <div class="mode-selector">
+          <label class="mode-card">
+            <input type="radio" name="apiMode" value="local" checked />
+            <div>
+              <strong>💾 로컬 스토리지 모드</strong>
+              <p>서버 설정 없이 브라우저에 즉시 저장 (테스트 및 기본 사용)</p>
+            </div>
+          </label>
+          <label class="mode-card">
+            <input type="radio" name="apiMode" value="gcal" />
+            <div>
+              <strong>📅 구글 캘린더 + Tasks API</strong>
+              <p><code>GET /calendars/primary/events</code>로 오늘 일정 직접 조회 + 로컬 커스텀 상태 병합</p>
+            </div>
+          </label>
+          <label class="mode-card">
+            <input type="radio" name="apiMode" value="gas" />
+            <div>
+              <strong>🚀 자체 API: Google Apps Script (추천)</strong>
+              <p>GAS가 구글 캘린더를 대신 읽고, 시트에 완료체크·유튜브리스트·Muse 일정을 통합 저장</p>
+            </div>
+          </label>
+          <label class="mode-card">
+            <input type="radio" name="apiMode" value="supabase" />
+            <div>
+              <strong>⚡ 자체 API: Supabase REST</strong>
+              <p>Postgres DB에 일정, 할 일, 유튜브 리스트 저장 및 실시간 동기화</p>
+            </div>
+          </label>
+        </div>
+
+        <!-- Google Calendar 설정 -->
+        <div id="gcalFields" class="provider-fields hidden">
+          <div class="field-row">
+            <label class="field">
+              <span>Calendar ID</span>
+              <input id="gcalCalendarId" type="text" value="primary" placeholder="primary" />
+            </label>
+            <label class="field">
+              <span>Google Tasks 포함</span>
+              <select id="gcalIncludeTasks">
+                <option value="true" selected>사용 (Google Tasks API 연동)</option>
+                <option value="false">사용 안 함</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">
+            <span>OAuth Access Token (Bearer Token)</span>
+            <input id="gcalAccessToken" type="password" placeholder="ya29.a0..." />
+          </label>
+          <label class="field">
+            <span>수정 시 구글 캘린더에 역반영 (PATCH)</span>
+            <select id="gcalWriteBack">
+              <option value="false" selected>읽기 전용 (앱 내 시간 조절만 저장)</option>
+              <option value="true">드래그/리사이즈 시 구글 캘린더에도 반영</option>
+            </select>
+          </label>
+          <p class="api-note">
+            💡 브라우저 정적 앱에서 토큰 만료 없이 편하게 쓰려면 <strong>Google Apps Script (GAS)</strong> 모드를 권장합니다.
+          </p>
+        </div>
+
+        <!-- GAS 설정 -->
+        <div id="gasFields" class="provider-fields hidden">
+          <label class="field">
+            <span>GAS Web App URL (<code>/exec</code>)</span>
+            <input id="gasUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" />
+          </label>
+          <label class="field">
+            <span>API Secret Token (선택)</span>
+            <input id="gasToken" type="password" placeholder="backend/gas-code.gs에 설정한 토큰" />
+          </label>
+          <div class="muse-snippet-box">
+            <div class="snippet-header">
+              <span>🤖 Muse에게 전달할 일정/유튜브 등록 요청 예시</span>
+              <button type="button" id="copyMusePromptBtn" class="chip-btn subtle">복사</button>
+            </div>
+            <pre id="musePayloadPreview"></pre>
+          </div>
+        </div>
+
+        <!-- Supabase 설정 -->
+        <div id="supabaseFields" class="provider-fields hidden">
+          <label class="field">
+            <span>Supabase Project URL</span>
+            <input id="sbUrl" type="url" placeholder="https://xxxx.supabase.co" />
+          </label>
+          <label class="field">
+            <span>Supabase Anon Key</span>
+            <input id="sbAnonKey" type="password" placeholder="eyJhbGci..." />
+          </label>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" id="resetDemoBtn" class="btn-secondary">샘플 데이터 복원</button>
+          <div class="footer-right">
+            <button type="button" class="btn-secondary" data-close="apiModal">닫기</button>
+            <button type="submit" class="btn-primary">저장 및 즉시 동기화</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 토스트 알림 -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="./js/api.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>
