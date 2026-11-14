@@ -1529,7 +1529,6 @@
                   <div class="dock-card-actions">
                     <button type="button" class="mini-btn jump-btn" title="타임라인에서 보기">📍</button>
                     <button type="button" class="mini-btn unplace-btn" title="미배치 목록으로 옮기기">↩️</button>
-                    <button type="button" class="mini-btn edit-btn" title="편집">✏️</button>
                   </div>
                 </div>
               `;
@@ -1552,10 +1551,6 @@
               card.querySelector(".unplace-btn").addEventListener("click", async () => {
                 await commitScheduleTimeChange(item, null, null);
                 showToast("미배치 목록으로 옮겼습니다.", "📥");
-              });
-
-              card.querySelector(".edit-btn").addEventListener("click", () => {
-                openEventModal(item.id);
               });
 
               el.placedList.appendChild(card);
