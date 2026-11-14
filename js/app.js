@@ -897,104 +897,168 @@
     }
   }
 
+  function animateListReorder(container, buildCardsFn) {
+    const prevTops = new Map();
+    container.querySelectorAll("[data-id]").forEach((node) => {
+      prevTops.set(node.dataset.id, node.getBoundingClientRect().top);
+    });
+
+    buildCardsFn();
+
+    const movedCards = [];
+    container.querySelectorAll("[data-id]").forEach((node) => {
+      const oldTop = prevTops.get(node.dataset.id);
+      if (oldTop === undefined) return;
+      const newTop = node.getBoundingClientRect().top;
+      const deltaY = oldTop - newTop;
+      if (Math.abs(deltaY) < 1.5) return;
+
+      node.style.transition = "none";
+      node.style.transform = `translateY(${deltaY}px)`;
+      node.style.zIndex = deltaY < 0 ? "5" : "2";
+      node.style.position = "relative";
+      movedCards.push(node);
+    });
+
+    if (!movedCards.length) return;
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        movedCards.forEach((node) => {
+          node.style.transition = "transform 0.38s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease";
+          node.style.transform = "translateY(0)";
+          const clearInline = () => {
+            node.style.transition = "";
+            node.style.transform = "";
+            node.style.zIndex = "";
+            node.style.position = "";
+          };
+          node.addEventListener("transitionend", clearInline, { once: true });
+          setTimeout(clearInline, 420);
+        });
+      });
+    });
+  }
+
   function renderLeftPanel() {
-    const untimed = schedules.filter((s) => !s.hasStartAt);
-    const reminders = schedules.filter((s) => s.type === "reminder");
+    const sortDoneBottom = (arr) => [
+      ...arr.filter((s) => !s.done),
+      ...arr.filter((s) => s.done)
+    ];
+
+    const untimed = sortDoneBottom(schedules.filter((s) => !s.hasStartAt));
+    const reminders = sortDoneBottom(schedules.filter((s) => s.type === "reminder"));
 
     el.stagedCountBadge.textContent = String(untimed.length);
     el.untimedCount.textContent = String(untimed.length);
     el.reminderSummaryCount.textContent = String(reminders.length);
 
-    el.untimedList.innerHTML = "";
-    if (!untimed.length) {
-      el.untimedList.innerHTML = `<div class="empty-hint">시간 미정 일정이 없습니다.<br/>위에서 추가하거나 타임라인에서 빼오세요.</div>`;
-    } else {
-      for (const item of untimed) {
-        const card = document.createElement("div");
-        card.className = `dock-card ${item.done ? "is-done" : ""}`;
-        card.dataset.type = item.type;
-        card.draggable = true;
+    const untimedKey = untimed.map((s) => `${s.id}:${s.done ? 1 : 0}:${s.type}:${s.title}`).join("|");
+    if (el.untimedList.dataset.renderKey !== untimedKey) {
+      el.untimedList.dataset.renderKey = untimedKey;
+      animateListReorder(el.untimedList, () => {
+        el.untimedList.innerHTML = "";
+        if (!untimed.length) {
+          el.untimedList.innerHTML = `<div class="empty-hint">시간 미정 일정이 없습니다.<br/>위에서 추가하거나 타임라인에서 빼오세요.</div>`;
+          return;
+        }
+        for (const item of untimed) {
+          const card = document.createElement("div");
+          card.className = `dock-card ${item.done ? "is-done" : ""}`;
+          card.dataset.id = item.id;
+          card.dataset.type = item.type;
+          card.draggable = true;
 
-        card.innerHTML = `
-          <div class="dock-card-top">
-            <input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />
-            <div class="dock-card-title">${escapeHtml(item.title)}</div>
-          </div>
-          <div class="dock-card-meta">
-            <span>${TYPE_META[item.type]?.label || "일정"}</span>
-            <div class="dock-card-actions">
-              <button type="button" class="mini-btn place-btn" title="빈 시간에 배치">+ 배치</button>
-              <button type="button" class="mini-btn del del-btn" title="삭제">✕</button>
+          card.innerHTML = `
+            <div class="dock-card-top">
+              <input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />
+              <div class="dock-card-title">${escapeHtml(item.title)}</div>
             </div>
-          </div>
-        `;
+            <div class="dock-card-meta">
+              <span>${TYPE_META[item.type]?.label || "일정"}</span>
+              <div class="dock-card-actions">
+                <button type="button" class="mini-btn place-btn" title="빈 시간에 배치">+ 배치</button>
+                <button type="button" class="mini-btn del del-btn" title="삭제">✕</button>
+              </div>
+            </div>
+          `;
 
-        card.querySelector(".event-check").addEventListener("change", (e) => {
-          toggleScheduleDone(item.id, e.target.checked);
-        });
+          card.querySelector(".event-check").addEventListener("change", (e) => {
+            toggleScheduleDone(item.id, e.target.checked);
+          });
 
-        card.querySelector(".place-btn").addEventListener("click", async () => {
-          const startMin = findNextAvailableSlot(30);
-          const endMin = item.type === "reminder" ? null : Math.min(1440, startMin + 30);
-          await commitScheduleTimeChange(item, startMin, endMin);
-        });
+          card.querySelector(".place-btn").addEventListener("click", async () => {
+            const startMin = findNextAvailableSlot(30);
+            const endMin = item.type === "reminder" ? null : Math.min(1440, startMin + 30);
+            await commitScheduleTimeChange(item, startMin, endMin);
+          });
 
-        card.querySelector(".del-btn").addEventListener("click", () => {
-          deleteScheduleById(item.id);
-        });
+          card.querySelector(".del-btn").addEventListener("click", () => {
+            deleteScheduleById(item.id);
+          });
 
-        card.addEventListener("dragstart", (e) => {
-          activeHtmlDragPayload = {
-            kind: "untimed",
-            id: item.id,
-            title: item.title,
-            durationMin: item.type === "reminder" ? 0 : 30,
-            type: item.type
-          };
-          e.dataTransfer.setData("text/plain", JSON.stringify(activeHtmlDragPayload));
-        });
-        card.addEventListener("dragend", () => {
-          activeHtmlDragPayload = null;
-          el.ghostPreview.classList.add("hidden");
-        });
+          card.addEventListener("dragstart", (e) => {
+            activeHtmlDragPayload = {
+              kind: "untimed",
+              id: item.id,
+              title: item.title,
+              durationMin: item.type === "reminder" ? 0 : 30,
+              type: item.type
+            };
+            e.dataTransfer.setData("text/plain", JSON.stringify(activeHtmlDragPayload));
+          });
+          card.addEventListener("dragend", () => {
+            activeHtmlDragPayload = null;
+            el.ghostPreview.classList.add("hidden");
+          });
 
-        el.untimedList.appendChild(card);
-      }
+          el.untimedList.appendChild(card);
+        }
+      });
     }
 
-    el.reminderHighlightList.innerHTML = "";
-    if (!reminders.length) {
-      el.reminderHighlightList.innerHTML = `<div class="empty-hint">등록된 알림 일정이 없습니다.</div>`;
-    } else {
-      for (const rem of reminders) {
-        const card = document.createElement("div");
-        card.className = `reminder-pill-card ${rem.done ? "is-done" : ""}`;
-        card.innerHTML = `
-          <input type="checkbox" class="event-check" ${rem.done ? "checked" : ""} title="완료 체크" />
-          <span class="reminder-pill-time">${rem.hasStartAt ? minToTimeStr(rem.startMin) : "미정"}</span>
-          <span class="reminder-pill-title" title="${escapeAttr(rem.title)}">${escapeHtml(rem.title)}</span>
-        `;
+    const remindersKey = reminders
+      .map((s) => `${s.id}:${s.done ? 1 : 0}:${s.hasStartAt ? s.startMin : "n"}:${s.title}`)
+      .join("|");
+    if (el.reminderHighlightList.dataset.renderKey !== remindersKey) {
+      el.reminderHighlightList.dataset.renderKey = remindersKey;
+      animateListReorder(el.reminderHighlightList, () => {
+        el.reminderHighlightList.innerHTML = "";
+        if (!reminders.length) {
+          el.reminderHighlightList.innerHTML = `<div class="empty-hint">등록된 알림 일정이 없습니다.</div>`;
+          return;
+        }
+        for (const rem of reminders) {
+          const card = document.createElement("div");
+          card.className = `reminder-pill-card ${rem.done ? "is-done" : ""}`;
+          card.dataset.id = rem.id;
+          card.innerHTML = `
+            <input type="checkbox" class="event-check" ${rem.done ? "checked" : ""} title="완료 체크" />
+            <span class="reminder-pill-time">${rem.hasStartAt ? minToTimeStr(rem.startMin) : "미정"}</span>
+            <span class="reminder-pill-title" title="${escapeAttr(rem.title)}">${escapeHtml(rem.title)}</span>
+          `;
 
-        card.querySelector(".event-check").addEventListener("click", (e) => e.stopPropagation());
-        card.querySelector(".event-check").addEventListener("change", (e) => {
-          toggleScheduleDone(rem.id, e.target.checked);
-        });
+          card.querySelector(".event-check").addEventListener("click", (e) => e.stopPropagation());
+          card.querySelector(".event-check").addEventListener("change", (e) => {
+            toggleScheduleDone(rem.id, e.target.checked);
+          });
 
-        card.addEventListener("click", () => {
-          if (rem.hasStartAt) {
-            el.timelineScroll.scrollTo({
-              top: Math.max(0, minToY(rem.startMin) - 80),
-              behavior: "smooth"
-            });
-            selectedEventId = rem.id;
-            renderEvents();
-          } else {
-            openEventModal(rem.id);
-          }
-        });
+          card.addEventListener("click", () => {
+            if (rem.hasStartAt) {
+              el.timelineScroll.scrollTo({
+                top: Math.max(0, minToY(rem.startMin) - 80),
+                behavior: "smooth"
+              });
+              selectedEventId = rem.id;
+              renderEvents();
+            } else {
+              openEventModal(rem.id);
+            }
+          });
 
-        el.reminderHighlightList.appendChild(card);
-      }
+          el.reminderHighlightList.appendChild(card);
+        }
+      });
     }
   }
 
