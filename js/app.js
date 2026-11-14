@@ -42,6 +42,15 @@
     mobileDateSlot: document.getElementById("mobileDateSlot"),
     dateNav: document.getElementById("dateNav"),
     datePicker: document.getElementById("datePicker"),
+    datePickerBtn: document.getElementById("datePickerBtn"),
+    dateDisplayText: document.getElementById("dateDisplayText"),
+    dateWeekdayBadge: document.getElementById("dateWeekdayBadge"),
+    calendarPopover: document.getElementById("calendarPopover"),
+    calPrevMonthBtn: document.getElementById("calPrevMonthBtn"),
+    calNextMonthBtn: document.getElementById("calNextMonthBtn"),
+    calTodayBtn: document.getElementById("calTodayBtn"),
+    calMonthLabel: document.getElementById("calMonthLabel"),
+    calDaysGrid: document.getElementById("calDaysGrid"),
     prevDayBtn: document.getElementById("prevDayBtn"),
     nextDayBtn: document.getElementById("nextDayBtn"),
     todayBtn: document.getElementById("todayBtn"),
@@ -481,12 +490,124 @@
     return clamp(candidate, earlyEndMin, 1440 - span);
   }
 
+  /* -------------------- 날짜 표시 & 커스텀 달력 팝오버 -------------------- */
+
+  const CAL_WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
+  let calendarViewMonth = null;
+
+  function parseDateParts(dateStr) {
+    const [y, m, d] = String(dateStr || PlannerAPI.todayKst())
+      .split("-")
+      .map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return {
+      year: dt.getUTCFullYear(),
+      month: dt.getUTCMonth() + 1,
+      monthIdx: dt.getUTCMonth(),
+      day: dt.getUTCDate(),
+      dow: dt.getUTCDay(),
+    };
+  }
+
+  function formatYmd(year, monthIdx, day) {
+    const dt = new Date(Date.UTC(year, monthIdx, day));
+    const y = dt.getUTCFullYear();
+    const m = String(dt.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(dt.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  function updateDateDisplay(dateStr) {
+    if (el.datePicker) el.datePicker.value = dateStr;
+    const { year, month, day, dow } = parseDateParts(dateStr);
+    if (el.dateDisplayText) {
+      el.dateDisplayText.textContent = `${year}. ${String(month).padStart(2, "0")}. ${String(day).padStart(2, "0")}`;
+    }
+    if (el.dateWeekdayBadge) {
+      el.dateWeekdayBadge.textContent = `(${CAL_WEEKDAY_LABELS[dow]})`;
+    }
+    if (el.datePickerBtn) {
+      el.datePickerBtn.classList.toggle("is-sat", dow === 6);
+      el.datePickerBtn.classList.toggle("is-sun", dow === 0);
+    }
+    if (el.calendarPopover && !el.calendarPopover.classList.contains("hidden")) {
+      renderCalendarPopover();
+    }
+  }
+
+  function renderCalendarPopover() {
+    if (!el.calDaysGrid || !el.calMonthLabel) return;
+    if (!calendarViewMonth) {
+      const p = parseDateParts(currentDate);
+      calendarViewMonth = { year: p.year, monthIdx: p.monthIdx };
+    }
+    const { year, monthIdx } = calendarViewMonth;
+    el.calMonthLabel.textContent = `${year}년 ${monthIdx + 1}월`;
+
+    const firstDow = new Date(Date.UTC(year, monthIdx, 1)).getUTCDay();
+    const todayStr = PlannerAPI.todayKst();
+
+    el.calDaysGrid.innerHTML = "";
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < 42; i++) {
+      const cellDate = new Date(Date.UTC(year, monthIdx, 1 - firstDow + i));
+      const cYear = cellDate.getUTCFullYear();
+      const cMonthIdx = cellDate.getUTCMonth();
+      const cDay = cellDate.getUTCDate();
+      const cDow = cellDate.getUTCDay();
+      const cellStr = formatYmd(cYear, cMonthIdx, cDay);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cal-day-btn";
+      if (cDow === 6) btn.classList.add("is-sat");
+      if (cDow === 0) btn.classList.add("is-sun");
+      if (cMonthIdx !== monthIdx) btn.classList.add("is-other-month");
+      if (cellStr === todayStr) btn.classList.add("is-today");
+      if (cellStr === currentDate) btn.classList.add("is-selected");
+      btn.textContent = String(cDay);
+      btn.title = `${cellStr} (${CAL_WEEKDAY_LABELS[cDow]})`;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeCalendarPopover();
+        loadDay(cellStr);
+      });
+      frag.appendChild(btn);
+    }
+    el.calDaysGrid.appendChild(frag);
+  }
+
+  function openCalendarPopover() {
+    if (!el.calendarPopover) return;
+    const p = parseDateParts(currentDate);
+    calendarViewMonth = { year: p.year, monthIdx: p.monthIdx };
+    renderCalendarPopover();
+    el.calendarPopover.classList.remove("hidden");
+    el.datePickerBtn?.setAttribute("aria-expanded", "true");
+  }
+
+  function closeCalendarPopover() {
+    if (!el.calendarPopover || el.calendarPopover.classList.contains("hidden")) return;
+    el.calendarPopover.classList.add("hidden");
+    el.datePickerBtn?.setAttribute("aria-expanded", "false");
+  }
+
+  function shiftCalendarMonth(delta) {
+    if (!calendarViewMonth) {
+      const p = parseDateParts(currentDate);
+      calendarViewMonth = { year: p.year, monthIdx: p.monthIdx };
+    }
+    const dt = new Date(Date.UTC(calendarViewMonth.year, calendarViewMonth.monthIdx + delta, 1));
+    calendarViewMonth = { year: dt.getUTCFullYear(), monthIdx: dt.getUTCMonth() };
+    renderCalendarPopover();
+  }
+
   /* -------------------- API 호출 래퍼 -------------------- */
 
   async function loadDay(dateStr, scrollOptimal = true) {
     const reqToken = ++loadRequestToken;
     currentDate = dateStr;
-    el.datePicker.value = dateStr;
+    updateDateDisplay(dateStr);
     selectedEventId = null;
     updateApiBadge();
 
@@ -2751,13 +2872,67 @@
   /* -------------------- 이벤트 바인딩 -------------------- */
 
   function bindControls() {
-    el.datePicker.addEventListener("change", (e) => {
+    el.datePicker?.addEventListener("change", (e) => {
       if (e.target.value) loadDay(e.target.value);
     });
 
-    el.prevDayBtn.addEventListener("click", () => loadDay(PlannerAPI.shiftDateStr(currentDate, -1)));
-    el.nextDayBtn.addEventListener("click", () => loadDay(PlannerAPI.shiftDateStr(currentDate, 1)));
-    el.todayBtn.addEventListener("click", () => loadDay(PlannerAPI.todayKst()));
+    el.datePickerBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (el.calendarPopover?.classList.contains("hidden")) {
+        openCalendarPopover();
+      } else {
+        closeCalendarPopover();
+      }
+    });
+
+    el.calPrevMonthBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      shiftCalendarMonth(-1);
+    });
+
+    el.calNextMonthBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      shiftCalendarMonth(1);
+    });
+
+    el.calTodayBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeCalendarPopover();
+      loadDay(PlannerAPI.todayKst());
+    });
+
+    el.calendarPopover?.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+
+    document.addEventListener("click", (e) => {
+      if (
+        el.calendarPopover &&
+        !el.calendarPopover.classList.contains("hidden") &&
+        !el.dateNav?.contains(e.target)
+      ) {
+        closeCalendarPopover();
+      }
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeCalendarPopover();
+      }
+    });
+
+    el.prevDayBtn.addEventListener("click", () => {
+      closeCalendarPopover();
+      loadDay(PlannerAPI.shiftDateStr(currentDate, -1));
+    });
+    el.nextDayBtn.addEventListener("click", () => {
+      closeCalendarPopover();
+      loadDay(PlannerAPI.shiftDateStr(currentDate, 1));
+    });
+    el.todayBtn.addEventListener("click", () => {
+      closeCalendarPopover();
+      loadDay(PlannerAPI.todayKst());
+    });
 
     el.snapSelect?.addEventListener("change", (e) => {
       prefs.snapMin = Number(e.target.value);
