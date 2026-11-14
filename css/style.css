@@ -1417,7 +1417,8 @@ html[data-theme="light"] .hour-row::after {
 
 .event-block:hover,
 .event-block.is-selected {
-  z-index: 20;
+  z-index: 35;
+  overflow: visible;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.26);
 }
 
@@ -1732,13 +1733,57 @@ html[data-theme="light"] .badge-reminder {
   gap: 6px;
   font-size: 11px;
   color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
 }
 
-/* 호버/선택 시 나타나는 빠른 조절 툴바 */
+.event-time-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 호버/선택 시 카드 바깥에 뜨는 플로팅 빠른 조절 필 */
 .event-quick-actions {
   display: none;
+  position: absolute;
+  right: 4px;
+  top: calc(100% + 6px);
   align-items: center;
-  gap: 3px;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 40;
+}
+
+.event-quick-actions::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 8px;
+}
+
+.event-block.is-near-bottom .event-quick-actions {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.event-block.is-near-bottom .event-quick-actions::before {
+  top: auto;
+  bottom: -8px;
+}
+
+html[data-theme="light"] .event-quick-actions {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: var(--border-strong);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
 }
 
 .event-block:hover .event-quick-actions,
@@ -1746,31 +1791,40 @@ html[data-theme="light"] .badge-reminder {
   display: flex;
 }
 
+.event-block.is-dragging .event-quick-actions {
+  display: none !important;
+}
+
 .q-btn {
-  padding: 2px 6px;
-  border-radius: 5px;
-  font-size: 10px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  background: rgba(15, 23, 42, 0.65);
+  background: rgba(255, 255, 255, 0.08);
   color: #f8fafc;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.12s, color 0.12s;
+  transition: background-color 0.12s, color 0.12s, transform 0.1s;
+}
+
+.q-btn:active {
+  transform: scale(0.95);
 }
 
 .q-btn.q-icon {
-  width: 22px;
-  height: 20px;
+  width: 26px;
+  height: 24px;
   padding: 0;
 }
 
 html[data-theme="light"] .q-btn {
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--surface-2);
   color: var(--text);
-  border-color: var(--border-strong);
+  border-color: var(--border);
 }
 
 .q-btn:hover {
@@ -2696,13 +2750,14 @@ html[data-theme="light"] .modal-backdrop {
   }
 
   .event-block.is-selected .q-btn {
-    padding: 4px 8px;
+    height: 30px;
+    padding: 0 11px;
     font-size: 11px;
   }
 
   .event-block.is-selected .q-btn.q-icon {
-    width: 26px;
-    height: 24px;
+    width: 32px;
+    height: 30px;
   }
 
   .event-check {
