@@ -88,19 +88,20 @@
 
   /* -------------------- 한국 시간(KST, Asia/Seoul) 유틸 -------------------- */
 
+  const KST_DATETIME_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+    timeZone: KST_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+
   function getKstDateTimeParts(dateObj = new Date()) {
-    const formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: KST_TIMEZONE,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false
-    });
     const map = {};
-    for (const part of formatter.formatToParts(dateObj)) {
+    for (const part of KST_DATETIME_FORMATTER.formatToParts(dateObj)) {
       if (part.type !== "literal") {
         map[part.type] = part.value;
       }
@@ -254,6 +255,7 @@
   }
 
   let cloudPrefsSyncTimer = null;
+  let lastCloudPushedPrefsSig = "";
 
   function normalizePrefs(parsed) {
     if (!parsed || typeof parsed !== "object") return structuredCloneSafe(DEFAULT_PREFS);
@@ -300,16 +302,26 @@
   }
 
   async function pushPrefsToCloudNow(prefs) {
+    if (cloudPrefsSyncTimer) {
+      clearTimeout(cloudPrefsSyncTimer);
+      cloudPrefsSyncTimer = null;
+    }
     try {
+      const normalized = normalizePrefs(prefs);
+      const sig = JSON.stringify({ ...normalized, _updatedAt: 0 });
+      if (sig === lastCloudPushedPrefsSig) return;
       const sb = await getSupabaseClient().catch(() => null);
       if (!sb) return;
       const { data: sessData } = await sb.auth.getSession();
       if (!sessData?.session) return;
-      await sb.auth.updateUser({
+      const { error } = await sb.auth.updateUser({
         data: {
-          planner_prefs: normalizePrefs(prefs)
+          planner_prefs: normalized
         }
       });
+      if (!error) {
+        lastCloudPushedPrefsSig = sig;
+      }
     } catch {
       // ignore cloud sync error
     }
@@ -350,6 +362,9 @@
       const cloudUpdatedAt = Number(cloudRaw?._updatedAt) || 0;
       const localUpdatedAt = Number(local?._updatedAt) || 0;
 
+      if (cloudRaw && typeof cloudRaw === "object") {
+        lastCloudPushedPrefsSig = JSON.stringify({ ...normalizePrefs(cloudRaw), _updatedAt: 0 });
+      }
       if (cloudRaw && typeof cloudRaw === "object" && cloudUpdatedAt > localUpdatedAt) {
         const synced = normalizePrefs(cloudRaw);
         savePrefs(synced, { skipCloudSync: true, preserveUpdatedAt: true });

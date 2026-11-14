@@ -1,9 +1,9 @@
 (function () {
   const COLLAPSED_EARLY_HEIGHT = 30;
   const TYPE_META = {
-    schedule: { label: "일정", badge: "일정", color: "#3b82f6" },
-    task: { label: "할 일", badge: "할 일", color: "#10b981" },
-    reminder: { label: "알림", badge: "🔔 알림", color: "#f59e0b" }
+    schedule: { label: "일정", badge: "일정", icon: "📅", color: "#3b82f6" },
+    task: { label: "할 일", badge: "할 일", icon: "✅", color: "#10b981" },
+    reminder: { label: "알림", badge: "🔔 알림", icon: "🔔", color: "#f59e0b" }
   };
 
   let currentDate = PlannerAPI.todayKst();
@@ -35,6 +35,7 @@
   let deferredBroadcastSyncTimer = null;
   let lastIntervalPollAt = 0;
   let supabaseSession = null;
+  let zoomRafId = null;
 
   const el = {
     appShell: document.getElementById("appShell"),
@@ -1342,6 +1343,7 @@
 
   function renderPresets() {
     el.presetList.innerHTML = "";
+    const frag = document.createDocumentFragment();
     for (const p of prefs.presets) {
       const pill = document.createElement("button");
       pill.type = "button";
@@ -1386,8 +1388,9 @@
         el.ghostPreview.classList.add("hidden");
       });
 
-      el.presetList.appendChild(pill);
+      frag.appendChild(pill);
     }
+    el.presetList.appendChild(frag);
   }
 
   function animateListReorder(container, buildCardsFn) {
@@ -1580,14 +1583,14 @@
               });
 
               card.querySelector(".jump-btn").addEventListener("click", () => {
-                if (el.appShell && window.matchMedia("(max-width: 1024px)").matches) {
-                  el.appShell.setAttribute("data-mobile-tab", "timeline");
-                }
                 jumpToSchedule(item);
               });
 
               card.querySelector(".unplace-btn").addEventListener("click", async () => {
-                await commitScheduleTimeChange(item, null, null);
+                await commitScheduleTimeChange(item, null, null, {
+                  customStartIso: null,
+                  customEndIso: null
+                });
                 showToast("미배치 목록으로 옮겼습니다.", "📥");
               });
 
@@ -1650,12 +1653,13 @@
     const earlyEndLabel = `${String(earlyEndHour).padStart(2, "0")}:00`;
     const hourPx = 60 * prefs.pxPerMin;
 
+    const gridFrag = document.createDocumentFragment();
     const appendHourRow = (h) => {
       const row = document.createElement("div");
       row.className = "hour-row";
       row.style.height = `${hourPx}px`;
       row.innerHTML = `<span class="hour-label">${String(h).padStart(2, "0")}:00</span>`;
-      el.hourRowsLayer.appendChild(row);
+      gridFrag.appendChild(row);
     };
 
     for (let h = earlyEndHour; h < 24; h++) {
@@ -1683,12 +1687,13 @@
         PlannerAPI.savePrefs(prefs);
         renderAll();
       });
-      el.hourRowsLayer.appendChild(banner);
+      gridFrag.appendChild(banner);
     } else {
       for (let h = 0; h < earlyEndHour; h++) {
         appendHourRow(h);
       }
     }
+    el.hourRowsLayer.appendChild(gridFrag);
   }
 
   function renderEvents() {
@@ -1714,6 +1719,7 @@
       .sort((a, b) => a.startMin - b.startMin);
 
     const cols = computeEventColumns(blockEvents);
+    const eventsFrag = document.createDocumentFragment();
 
     for (const ev of blockEvents) {
       const visualStart =
@@ -1816,7 +1822,7 @@
       });
 
       bindEventPointerInteractions(block, ev);
-      el.eventsLayer.appendChild(block);
+      eventsFrag.appendChild(block);
     }
 
     // 알림(reminder)은 블록이 아닌 독립 오버레이 마커 라인으로 렌더링
@@ -1830,11 +1836,12 @@
         staggerCol = 0;
       }
       prevRemTop = top;
-      renderReminderMarker(rem, top, staggerCol);
+      renderReminderMarker(rem, top, staggerCol, eventsFrag);
     }
+    el.eventsLayer.appendChild(eventsFrag);
   }
 
-  function renderReminderMarker(ev, top, staggerCol = 0) {
+  function renderReminderMarker(ev, top, staggerCol = 0, targetLayer = el.eventsLayer) {
     const { isNow, isPast } = getEventTimeState(ev);
     const isFilteredOut = activeTypeFilter !== "all" && ev.type !== activeTypeFilter;
 
@@ -1875,7 +1882,7 @@
     });
 
     bindReminderMarkerInteractions(marker, pill, ev);
-    el.eventsLayer.appendChild(marker);
+    targetLayer.appendChild(marker);
   }
 
   function syncDockDragState(sourceEl, ghostRef, ev, clientX, clientY) {
@@ -2338,7 +2345,9 @@
       const origStart = touchDraftSlot.startMin;
       const origEnd = touchDraftSlot.endMin;
       const step = prefs.snapMin || 15;
-      const minBound = getTimelineMinBound();
+      const earlyEndMin = getEarlyEndMin();
+      const zoneMin = origStart < earlyEndMin ? 0 : earlyEndMin;
+      const zoneMax = origStart < earlyEndMin ? earlyEndMin : 1440;
 
       const cleanupDraft = () => {
         window.removeEventListener("pointermove", onDraftMove);
@@ -2352,9 +2361,9 @@
         const deltaMin = snap(dy / prefs.pxPerMin);
         if (deltaMin >= 0) {
           touchDraftSlot.startMin = origStart;
-          touchDraftSlot.endMin = clamp(origEnd + deltaMin, origStart + step, 1440);
+          touchDraftSlot.endMin = clamp(origEnd + deltaMin, origStart + step, zoneMax);
         } else {
-          touchDraftSlot.startMin = clamp(origStart + deltaMin, minBound, origEnd - step);
+          touchDraftSlot.startMin = clamp(origStart + deltaMin, zoneMin, origEnd - step);
           touchDraftSlot.endMin = origEnd;
         }
         renderTouchDraftSlot();
@@ -2392,7 +2401,7 @@
       const dropStart = clamp(snap(yToMin(y)), getTimelineMinBound(), 1440 - span);
       const dropEnd = dropStart + span;
       const top = minToY(dropStart);
-      const h = Math.max(24, minToY(dropEnd) - top);
+      const h = Math.max(24, endMinToY(dropEnd, dropStart) - top);
 
       el.ghostPreview.style.top = `${top}px`;
       el.ghostPreview.style.height = `${h}px`;
@@ -2473,8 +2482,21 @@
       scrollToOptimalPosition(true);
       return;
     }
-    selectedEventId = ev.id;
-    renderEvents();
+    const earlyStartMin = getEarlyStartMin();
+    const earlyEndMin = getEarlyEndMin();
+    const hiddenInEarly =
+      prefs.earlyCollapsed &&
+      (ev.type === "reminder"
+        ? ev.startMin >= earlyStartMin && ev.startMin < earlyEndMin
+        : ev.startMin >= earlyStartMin && ev.visualEndMin <= earlyEndMin);
+    if (hiddenInEarly) {
+      prefs.earlyCollapsed = false;
+      PlannerAPI.savePrefs(prefs);
+      selectedEventId = ev.id;
+      renderAll();
+    } else {
+      selectEventBlock(ev.id);
+    }
     scrollTimelineToY(minToY(ev.startMin) - 80, true);
   }
 
@@ -2539,9 +2561,13 @@
 
     const activeEv = isToday
       ? schedules.find((e) => {
-          if (!e.hasStartAt || e.done) return false;
+          if (!e.hasStartAt || e.done || e.type === "reminder") return false;
           const end = e.hasEndAt && e.endMin !== null ? e.endMin : e.startMin + 30;
           return e.startMin <= nowMin && nowMin < end;
+        }) ||
+        schedules.find((e) => {
+          if (!e.hasStartAt || e.type !== "reminder") return false;
+          return e.startMin <= nowMin && nowMin < e.startMin + 10;
         })
       : null;
 
@@ -2554,31 +2580,38 @@
     const focusEv = activeEv || nextEv;
 
     if (activeEv) {
-      const activeEnd = activeEv.hasEndAt && activeEv.endMin !== null ? activeEv.endMin : activeEv.startMin + 30;
+      const isReminder = activeEv.type === "reminder";
+      const activeEnd = isReminder
+        ? activeEv.startMin + 10
+        : activeEv.hasEndAt && activeEv.endMin !== null
+          ? activeEv.endMin
+          : activeEv.startMin + 30;
       const total = Math.max(1, activeEnd - activeEv.startMin);
       const elapsed = clamp(nowMin - activeEv.startMin, 0, total);
       const pct = Math.round((elapsed / total) * 100);
       const remain = Math.max(0, activeEnd - nowMin);
 
       el.nowBanner.classList.add("is-active");
-      el.nowBannerLabel.textContent = activeEv.type === "reminder" ? "ALERT" : "NOW";
+      el.nowBannerLabel.textContent = isReminder ? "ALERT" : "NOW";
       el.nowEventTitle.textContent = activeEv.title;
-      el.nowRemaining.textContent = `${remain}분 남음`;
-      updateIslandRing(pct, activeEv.type === "reminder" ? "#f59e0b" : "#ef4444");
+      el.nowRemaining.textContent = isReminder ? minToTimeStr(activeEv.startMin) : `${remain}분 남음`;
+      updateIslandRing(pct, isReminder ? "#f59e0b" : "#ef4444");
 
       el.islandTypeBadge.textContent = TYPE_META[activeEv.type]?.badge || "일정";
-      el.nowEventTime.textContent = activeEv.hasEndAt
-        ? `${minToTimeStr(activeEv.startMin)} ~ ${minToTimeStr(activeEv.endMin)}`
-        : `${minToTimeStr(activeEv.startMin)} 시작`;
-      el.islandElapsedText.textContent = `${pct}% 진행 · ${elapsed}분 경과`;
+      el.nowEventTime.textContent = isReminder
+        ? `${minToTimeStr(activeEv.startMin)} 알림`
+        : activeEv.hasEndAt
+          ? `${minToTimeStr(activeEv.startMin)} ~ ${minToTimeStr(activeEv.endMin)}`
+          : `${minToTimeStr(activeEv.startMin)} 시작`;
+      el.islandElapsedText.textContent = isReminder ? "설정된 알림 시각" : `${pct}% 진행 · ${elapsed}분 경과`;
       el.nowProgressBar.style.width = `${pct}%`;
 
-      el.nowMinusBtn.classList.remove("hidden");
+      el.nowMinusBtn.classList.toggle("hidden", isReminder);
       el.nowMinusBtn.disabled = activeEv.hasEndAt ? activeEv.endMin - activeEv.startMin <= 15 : true;
-      el.nowExtendBtn.classList.remove("hidden");
-      el.nowPlus30Btn.classList.remove("hidden");
+      el.nowExtendBtn.classList.toggle("hidden", isReminder);
+      el.nowPlus30Btn.classList.toggle("hidden", isReminder);
       el.nowStartNowBtn.classList.add("hidden");
-      el.nowDoneBtn.classList.toggle("hidden", activeEv.type === "reminder");
+      el.nowDoneBtn.classList.toggle("hidden", isReminder);
 
       el.nowMinusBtn.onclick = (e) => { e.stopPropagation(); handleQuickAction(activeEv.id, "minus15"); };
       el.nowExtendBtn.onclick = (e) => { e.stopPropagation(); handleQuickAction(activeEv.id, "plus15"); };
@@ -2611,8 +2644,9 @@
       el.nowStartNowBtn.onclick = (e) => { e.stopPropagation(); startScheduleNow(nextEv); };
       el.nowJumpBtn.onclick = (e) => { e.stopPropagation(); jumpToSchedule(nextEv); };
     } else {
-      const doneCnt = schedules.filter((e) => e.done).length;
-      const donePct = schedules.length ? Math.round((doneCnt / schedules.length) * 100) : 100;
+      const completable = schedules.filter((e) => e.type !== "reminder");
+      const doneCnt = completable.filter((e) => e.done).length;
+      const donePct = completable.length ? Math.round((doneCnt / completable.length) * 100) : 100;
 
       el.nowBanner.classList.remove("is-active");
       el.nowBannerLabel.textContent = isToday ? "FREE" : currentDate;
@@ -2622,7 +2656,7 @@
 
       el.islandTypeBadge.textContent = isToday ? "대기" : currentDate;
       el.nowEventTime.textContent = "타임라인을 클릭하거나 '+ 새 일정' 추가";
-      el.islandElapsedText.textContent = `완료 ${doneCnt}/${schedules.length}`;
+      el.islandElapsedText.textContent = `완료 ${doneCnt}/${completable.length}`;
       el.nowProgressBar.style.width = `${donePct}%`;
 
       el.nowMinusBtn.classList.add("hidden");
@@ -2656,10 +2690,12 @@
     if (activeEv && upNextEv) {
       el.islandNextInfo.innerHTML = `<span>다음 · <strong>${escapeHtml(upNextEv.title)}</strong></span><span>${minToTimeStr(upNextEv.startMin)}</span>`;
     } else if (!activeEv && nextEv) {
-      const remainCnt = schedules.filter((e) => !e.done).length;
+      const remainCnt = schedules.filter((e) => e.type !== "reminder" && !e.done).length;
       el.islandNextInfo.innerHTML = `<span>오늘 남은 미완료 일정</span><span>${remainCnt}건</span>`;
     } else {
-      el.islandNextInfo.innerHTML = `<span>이후 예정된 일정 없음</span><span>${schedules.length}건 중 ${schedules.filter((e) => e.done).length}건 완료</span>`;
+      const completable = schedules.filter((e) => e.type !== "reminder");
+      const doneCnt = completable.filter((e) => e.done).length;
+      el.islandNextInfo.innerHTML = `<span>이후 예정된 일정 없음</span><span>${completable.length}건 중 ${doneCnt}건 완료</span>`;
     }
 
     const remEv =
@@ -2690,12 +2726,13 @@
 
   function renderRightWidgets() {
     const totalCount = schedules.length;
-    const doneCount = schedules.filter((e) => e.done).length;
-    const remainCount = totalCount - doneCount;
-    const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
+    const completable = schedules.filter((e) => e.type !== "reminder");
+    const doneCount = completable.filter((e) => e.done).length;
+    const remainCount = completable.length - doneCount;
+    const pct = completable.length ? Math.round((doneCount / completable.length) * 100) : 0;
 
     el.completionPercent.textContent = `${pct}%`;
-    el.statTotalCount.textContent = `${totalCount}개`;
+    el.statTotalCount.textContent = `${completable.length}개`;
     el.statDoneCount.textContent = `${doneCount}개`;
     el.statRemainingCount.textContent = `${remainCount}개`;
 
@@ -2705,6 +2742,7 @@
     }
 
     el.typeBreakdownBars.innerHTML = "";
+    const breakdownFrag = document.createDocumentFragment();
     for (const [key, meta] of Object.entries(TYPE_META)) {
       const cnt = countsByType[key] || 0;
       const ratio = totalCount ? Math.round((cnt / totalCount) * 100) : 0;
@@ -2717,8 +2755,9 @@
         </div>
         <span class="cat-bar-time">${cnt}건</span>
       `;
-      el.typeBreakdownBars.appendChild(row);
+      breakdownFrag.appendChild(row);
     }
+    el.typeBreakdownBars.appendChild(breakdownFrag);
 
     renderYoutubeList();
 
@@ -2810,9 +2849,24 @@
   /* -------------------- 모달: 일정 생성 / 편집 -------------------- */
 
   function syncTimeFieldsVisibility() {
+    const isReminder = el.editType?.value === "reminder";
     const timed = el.editTimedCheck.checked;
     el.editTimeFields.classList.toggle("hidden", !timed);
     el.editStart.required = timed;
+
+    const endField = el.editEnd?.closest(".field");
+    if (endField) endField.classList.toggle("hidden", isReminder);
+    const doneRow = el.editDone?.closest(".checkbox-row-inline");
+    if (doneRow) doneRow.classList.toggle("hidden", isReminder);
+
+    if (isReminder) {
+      el.editHasEndCheck.checked = false;
+      el.editEnd.disabled = true;
+      el.editEnd.value = "";
+      el.editDone.checked = false;
+      return;
+    }
+
     el.editEnd.disabled = !el.editHasEndCheck.checked;
     if (!el.editHasEndCheck.checked) {
       el.editEnd.value = "";
@@ -3270,13 +3324,21 @@
 
     el.zoomRange?.addEventListener("input", (e) => {
       prefs.pxPerMin = Number(e.target.value);
-      PlannerAPI.savePrefs(prefs);
       if (el.zoomValueLabel) {
         el.zoomValueLabel.textContent = `${prefs.pxPerMin.toFixed(2)}x`;
       }
-      renderTimelineGrid();
-      renderEvents();
-      renderNowState();
+      if (!zoomRafId) {
+        zoomRafId = requestAnimationFrame(() => {
+          zoomRafId = null;
+          renderTimelineGrid();
+          renderEvents();
+          renderNowState();
+        });
+      }
+    });
+    el.zoomRange?.addEventListener("change", (e) => {
+      prefs.pxPerMin = Number(e.target.value);
+      PlannerAPI.savePrefs(prefs);
     });
 
     el.defaultDurationSelect?.addEventListener("change", (e) => {
@@ -3548,7 +3610,11 @@
       if (el.cascadeCheck) prefs.cascadeMode = el.cascadeCheck.checked;
       if (el.themeSelect) prefs.theme = el.themeSelect.value === "light" ? "light" : "dark";
       if (el.dimCompletedCheck) prefs.dimCompleted = el.dimCompletedCheck.checked;
-      if (el.browserNotifyCheck) prefs.browserNotify = el.browserNotifyCheck.checked;
+      if (el.browserNotifyCheck) {
+        const canNotify = typeof Notification !== "undefined" && Notification.permission === "granted";
+        prefs.browserNotify = Boolean(el.browserNotifyCheck.checked && canNotify);
+        el.browserNotifyCheck.checked = prefs.browserNotify;
+      }
       el.settingsWidgetChecks?.querySelectorAll("input[data-widget]").forEach((cb) => {
         if (!prefs.widgets) prefs.widgets = {};
         prefs.widgets[cb.dataset.widget] = cb.checked;
@@ -3722,20 +3788,14 @@
 
     document.addEventListener("click", (e) => {
       if (!e.target.closest(".event-block") && selectedEventId) {
-        selectedEventId = null;
-        renderEvents();
+        selectEventBlock(null);
       }
     });
 
     // 일정 편집 모달 제어
     el.editTimedCheck.addEventListener("change", syncTimeFieldsVisibility);
     el.editHasEndCheck.addEventListener("change", syncTimeFieldsVisibility);
-    el.editType.addEventListener("change", () => {
-      if (!el.editEventId.value && el.editType.value === "reminder") {
-        el.editHasEndCheck.checked = false;
-        syncTimeFieldsVisibility();
-      }
-    });
+    el.editType.addEventListener("change", syncTimeFieldsVisibility);
 
     el.eventForm.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -3744,6 +3804,8 @@
       const titleVal = el.editTitle.value.trim();
       if (!titleVal) return;
 
+      const typeVal = el.editType.value;
+      const isReminder = typeVal === "reminder";
       let startAt = null;
       let endAt = null;
       if (el.editTimedCheck.checked) {
@@ -3754,7 +3816,7 @@
         }
         startAt = PlannerAPI.kstMinutesToIso(dateVal, startMin);
 
-        if (el.editHasEndCheck.checked && el.editEnd.value) {
+        if (!isReminder && el.editHasEndCheck.checked && el.editEnd.value) {
           const endMin = PlannerAPI.hhmmToMinutes(el.editEnd.value);
           if (endMin < startMin) {
             showToast("종료 시각은 시작 시각보다 빠를 수 없습니다.");
@@ -3767,10 +3829,10 @@
       const payload = {
         date: dateVal,
         title: titleVal,
-        type: el.editType.value,
+        type: typeVal,
         start_at: startAt,
         end_at: endAt,
-        done: el.editDone.checked,
+        done: isReminder ? false : el.editDone.checked,
         memo: el.editMemo.value
       };
 
@@ -4022,13 +4084,17 @@
       supabaseSession = await PlannerAPI.getSupabaseSession();
       const sb = await PlannerAPI.getSupabaseClient().catch(() => null);
       if (sb) {
-        sb.auth.onAuthStateChange((_event, session) => {
+        sb.auth.onAuthStateChange((event, session) => {
+          const prevUserId = supabaseSession?.user?.id || null;
+          const nextUserId = session?.user?.id || null;
           supabaseSession = session || null;
           updateApiBadge();
           updateSupabaseAuthUi();
           if (supabaseSession) {
-            setupRealtimeSync(true);
-            syncCloudPrefs();
+            if (event === "SIGNED_IN" || event === "INITIAL_SESSION" || prevUserId !== nextUserId) {
+              setupRealtimeSync(prevUserId !== nextUserId);
+              syncCloudPrefs();
+            }
           } else {
             disconnectRealtime();
           }
@@ -4062,8 +4128,8 @@
     const curMin = getNowKstMinutes();
     if (curMin !== lastNowRenderMin) {
       renderEvents();
+      renderNowState();
     }
-    renderNowState();
     checkBrowserNotifications();
 
     const now = Date.now();
