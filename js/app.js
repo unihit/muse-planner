@@ -14,11 +14,14 @@
   let schedules = [];
   let widgetsState = { youtubeList: [], memo: "" };
   let selectedEventId = null;
+  let touchDraftSlot = null;
   let activeTypeFilter = "all";
   let activeHtmlDragPayload = null;
   let activePointerDrag = false;
   let toastTimer = null;
   let islandNotifyTimer = null;
+  let islandCollapseTimer = null;
+  const ISLAND_AUTO_COLLAPSE_MS = 5000;
   let lastNowRenderMin = -1;
   let isBackgroundSyncing = false;
   let lastSyncCheckAt = 0;
@@ -1152,11 +1155,46 @@
   /* -------------------- 60fps 포인터 드래그 & 상하 리사이즈 -------------------- */
 
   function selectEventBlock(eventId) {
+    if (eventId) clearTouchDraftSlot();
     selectedEventId = eventId;
     if (!el.eventsLayer) return;
     el.eventsLayer.querySelectorAll(".event-block").forEach((node) => {
       node.classList.toggle("is-selected", Boolean(eventId) && node.dataset.id === eventId);
     });
+  }
+
+  function renderTouchDraftSlot() {
+    if (!el.ghostPreview) return;
+    if (!touchDraftSlot) {
+      el.ghostPreview.classList.remove("is-touch-draft");
+      el.ghostPreview.classList.add("hidden");
+      el.ghostPreview.innerHTML = "";
+      return;
+    }
+
+    const { startMin, endMin } = touchDraftSlot;
+    const visualStart = prefs.earlyCollapsed ? Math.max(EARLY_END_MIN, startMin) : startMin;
+    const top = minToY(visualStart);
+    const h = Math.max(30, minToY(endMin) - top);
+
+    el.ghostPreview.style.top = `${top}px`;
+    el.ghostPreview.style.height = `${h}px`;
+    el.ghostPreview.classList.add("is-touch-draft");
+    el.ghostPreview.classList.remove("hidden");
+    el.ghostPreview.innerHTML = `
+      <div class="ghost-draft-header">
+        <span class="ghost-draft-label">+ ${minToTimeStr(startMin)} ~ ${minToTimeStr(endMin)} (${endMin - startMin}분)</span>
+        <button type="button" class="ghost-draft-close" aria-label="선택 취소">✕</button>
+      </div>
+      ${h >= 46 ? '<div class="ghost-draft-hint">탭하여 등록 · 위아래로 끌어 시간 조절</div>' : ""}
+      <div class="ghost-draft-handle" aria-hidden="true"></div>
+    `;
+  }
+
+  function clearTouchDraftSlot() {
+    if (!touchDraftSlot) return;
+    touchDraftSlot = null;
+    renderTouchDraftSlot();
   }
 
   function bindEventPointerInteractions(block, ev) {
@@ -1338,10 +1376,57 @@
 
   function bindTimelineCreationAndDrop() {
     el.hourRowsLayer.addEventListener("pointerdown", (e) => {
-      // 터치 환경에서는 빈 타임라인 터치/스크롤 시 모달이 뜨지 않도록 차단 (더블탭 또는 '+ 새 일정' 버튼 사용)
-      if (e.pointerType === "touch") return;
-      if (e.button !== 0) return;
       if (e.target.closest(".early-collapsed-banner")) return;
+
+      // 터치 환경: 스크롤과 구분해 1차 탭으로 점선 박스(touchDraftSlot) 표시
+      if (e.pointerType === "touch") {
+        const tapStartX = e.clientX;
+        const tapStartY = e.clientY;
+        let movedByScroll = false;
+
+        const cleanupTap = () => {
+          window.removeEventListener("pointermove", onTapMove);
+          window.removeEventListener("pointerup", onTapUp);
+          window.removeEventListener("pointercancel", cleanupTap);
+        };
+
+        const onTapMove = (mv) => {
+          if (Math.abs(mv.clientY - tapStartY) > 8 || Math.abs(mv.clientX - tapStartX) > 8) {
+            movedByScroll = true;
+            cleanupTap();
+          }
+        };
+
+        const onTapUp = () => {
+          cleanupTap();
+          if (movedByScroll) return;
+
+          if (selectedEventId) {
+            selectEventBlock(null);
+            return;
+          }
+          if (touchDraftSlot) {
+            clearTouchDraftSlot();
+            return;
+          }
+
+          const gridRect = el.timelineGrid.getBoundingClientRect();
+          const y = tapStartY - gridRect.top;
+          const minBound = prefs.earlyCollapsed ? EARLY_END_MIN : 0;
+          const step = prefs.snapMin || 15;
+          const anchorMin = clamp(snap(yToMin(y)), minBound, 1440 - Math.max(30, step));
+          const endMin = Math.min(1440, anchorMin + Math.max(30, step));
+          touchDraftSlot = { startMin: anchorMin, endMin };
+          renderTouchDraftSlot();
+        };
+
+        window.addEventListener("pointermove", onTapMove);
+        window.addEventListener("pointerup", onTapUp);
+        window.addEventListener("pointercancel", cleanupTap);
+        return;
+      }
+
+      if (e.button !== 0) return;
 
       const gridRect = el.timelineGrid.getBoundingClientRect();
       const startY = e.clientY - gridRect.top;
@@ -1354,6 +1439,7 @@
       const updateGhost = () => {
         const top = minToY(curStartMin);
         const h = Math.max(22, minToY(curEndMin) - top);
+        el.ghostPreview.classList.remove("is-touch-draft");
         el.ghostPreview.style.top = `${top}px`;
         el.ghostPreview.style.height = `${h}px`;
         el.ghostPreview.textContent = `+ 새 일정: ${minToTimeStr(curStartMin)} ~ ${minToTimeStr(curEndMin)} (${curEndMin - curStartMin}분)`;
@@ -1396,13 +1482,57 @@
       window.addEventListener("pointercancel", onCancel);
     });
 
-    // 모바일/터치용: 빈 타임라인 더블탭 시 해당 시각에 새 일정 생성, 단일 탭 시 선택 해제
-    el.hourRowsLayer.addEventListener("dblclick", (e) => {
-      if (e.target.closest(".early-collapsed-banner")) return;
-      const gridRect = el.timelineGrid.getBoundingClientRect();
-      const y = e.clientY - gridRect.top;
-      const anchorMin = snap(yToMin(y));
-      openNewEventModal(anchorMin, Math.min(1440, anchorMin + 30));
+    // 모바일/터치 점선 박스(touchDraftSlot): 다시 터치해 끌면 시간 늘리기, 그냥 탭하면 일정 생성 모달 열기
+    el.ghostPreview.addEventListener("pointerdown", (e) => {
+      if (!touchDraftSlot) return;
+      e.stopPropagation();
+
+      if (e.target.closest(".ghost-draft-close")) {
+        clearTouchDraftSlot();
+        return;
+      }
+
+      const startY = e.clientY;
+      const origStart = touchDraftSlot.startMin;
+      const origEnd = touchDraftSlot.endMin;
+      const step = prefs.snapMin || 15;
+      const minBound = prefs.earlyCollapsed ? EARLY_END_MIN : 0;
+
+      const cleanupDraft = () => {
+        window.removeEventListener("pointermove", onDraftMove);
+        window.removeEventListener("pointerup", onDraftUp);
+        window.removeEventListener("pointercancel", onDraftCancel);
+      };
+
+      const onDraftMove = (mv) => {
+        if (!touchDraftSlot) return;
+        const dy = mv.clientY - startY;
+        const deltaMin = snap(dy / prefs.pxPerMin);
+        if (deltaMin >= 0) {
+          touchDraftSlot.startMin = origStart;
+          touchDraftSlot.endMin = clamp(origEnd + deltaMin, origStart + step, 1440);
+        } else {
+          touchDraftSlot.startMin = clamp(origStart + deltaMin, minBound, origEnd - step);
+          touchDraftSlot.endMin = origEnd;
+        }
+        renderTouchDraftSlot();
+      };
+
+      const onDraftCancel = () => {
+        cleanupDraft();
+      };
+
+      const onDraftUp = () => {
+        cleanupDraft();
+        if (!touchDraftSlot) return;
+        const { startMin, endMin } = touchDraftSlot;
+        clearTouchDraftSlot();
+        openNewEventModal(startMin, endMin);
+      };
+
+      window.addEventListener("pointermove", onDraftMove);
+      window.addEventListener("pointerup", onDraftUp);
+      window.addEventListener("pointercancel", onDraftCancel);
     });
 
     el.hourRowsLayer.addEventListener("click", (e) => {
@@ -1529,6 +1659,26 @@
     const clampedLeft = clamp(desiredLeft, 12, Math.max(12, window.innerWidth - panelW - 12));
     const offsetPx = clampedLeft - desiredLeft;
     el.nowBanner.style.setProperty("--island-offset-x", `${Math.round(offsetPx)}px`);
+  }
+
+  function setIslandExpanded(expanded) {
+    if (!el.nowBanner) return;
+    if (islandCollapseTimer) {
+      clearTimeout(islandCollapseTimer);
+      islandCollapseTimer = null;
+    }
+    if (expanded) {
+      alignDynamicIsland();
+      el.nowBanner.classList.add("is-expanded");
+      islandCollapseTimer = setTimeout(() => {
+        setIslandExpanded(false);
+      }, ISLAND_AUTO_COLLAPSE_MS);
+    } else {
+      el.nowBanner.classList.remove("is-expanded");
+      if (el.nowBanner.contains(document.activeElement)) {
+        document.activeElement.blur();
+      }
+    }
   }
 
   function renderNowState() {
@@ -1975,16 +2125,38 @@
     if (compactBar) {
       compactBar.addEventListener("click", (e) => {
         e.stopPropagation();
-        alignDynamicIsland();
-        el.nowBanner.classList.toggle("is-expanded");
+        const willExpand = !el.nowBanner.classList.contains("is-expanded");
+        setIslandExpanded(willExpand);
       });
     }
-    el.nowBanner.addEventListener("mouseenter", alignDynamicIsland);
+    if (el.islandExpanded) {
+      el.islandExpanded.addEventListener("pointerdown", () => {
+        if (el.nowBanner.classList.contains("is-expanded")) {
+          setIslandExpanded(true);
+        }
+      });
+    }
+    el.nowBanner.addEventListener("mouseenter", () => {
+      alignDynamicIsland();
+      if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+        setIslandExpanded(true);
+      }
+    });
+    el.nowBanner.addEventListener("mouseleave", () => {
+      if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+        setIslandExpanded(false);
+      }
+    });
     el.nowBanner.addEventListener("focusin", alignDynamicIsland);
     window.addEventListener("resize", alignDynamicIsland);
+    document.addEventListener("pointerdown", (e) => {
+      if (el.nowBanner.classList.contains("is-expanded") && !el.nowBanner.contains(e.target)) {
+        setIslandExpanded(false);
+      }
+    });
     document.addEventListener("click", (e) => {
       if (!el.nowBanner.contains(e.target)) {
-        el.nowBanner.classList.remove("is-expanded");
+        setIslandExpanded(false);
       }
     });
 
@@ -2284,7 +2456,8 @@
       }
 
       if (e.key === "Escape") {
-        el.nowBanner.classList.remove("is-expanded");
+        setIslandExpanded(false);
+        clearTouchDraftSlot();
         document.querySelectorAll(".modal-backdrop").forEach((m) => m.classList.add("hidden"));
         return;
       }

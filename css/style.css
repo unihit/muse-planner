@@ -109,6 +109,8 @@ button {
   display: flex;
   align-items: center;
   gap: 14px;
+  position: relative;
+  z-index: 1;
 }
 
 .brand {
@@ -178,6 +180,7 @@ button {
 /* Apple Dynamic Island 스타일 실시간 컨트롤 센터 */
 .now-banner.dynamic-island {
   position: relative;
+  z-index: 120;
   flex: 1;
   max-width: 440px;
   min-width: 260px;
@@ -213,8 +216,8 @@ html[data-theme="light"] .now-banner.dynamic-island {
   height: 14px;
 }
 
-.now-banner.dynamic-island:hover,
 .now-banner.dynamic-island.is-expanded {
+  z-index: 200;
   transform: scale(1.015);
   border-color: rgba(99, 102, 241, 0.55);
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.14);
@@ -333,7 +336,6 @@ html[data-theme="light"] .now-banner.dynamic-island {
   flex-shrink: 0;
 }
 
-.now-banner.dynamic-island:hover .island-chevron,
 .now-banner.dynamic-island.is-expanded .island-chevron {
   transform: rotate(180deg);
   color: #f8fafc;
@@ -400,8 +402,6 @@ html[data-theme="light"] .island-expanded {
   box-shadow: 0 22px 48px rgba(15, 23, 42, 0.32);
 }
 
-.now-banner.dynamic-island:hover .island-expanded,
-.now-banner.dynamic-island:focus-within .island-expanded,
 .now-banner.dynamic-island.is-expanded .island-expanded {
   transform: translateX(calc(-50% + var(--island-offset-x, 0px))) translateY(0) scale(1);
   opacity: 1;
@@ -555,6 +555,8 @@ html[data-theme="light"] .island-expanded {
   align-items: center;
   gap: 6px;
   flex-wrap: nowrap;
+  position: relative;
+  z-index: 1;
 }
 
 .control-pill {
@@ -1275,6 +1277,62 @@ html[data-theme="light"] .hour-row::after {
   font-size: 11px;
   font-weight: 700;
   color: var(--text);
+}
+
+.ghost-preview.is-touch-draft {
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 30;
+  border: 2px dashed var(--accent-hover);
+  background: rgba(99, 102, 241, 0.24);
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.28);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 5px 8px 4px;
+  user-select: none;
+}
+
+.ghost-draft-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ghost-draft-label {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ghost-draft-close {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.45);
+  color: #f8fafc;
+  font-size: 11px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.ghost-draft-hint {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.ghost-draft-handle {
+  width: 36px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent-hover);
+  opacity: 0.75;
+  align-self: center;
 }
 
 /* 현재 시각 선 */
@@ -2252,22 +2310,58 @@ html[data-theme="light"] .modal-backdrop {
     min-height: 100vh;
   }
   .top-header {
-    flex-wrap: wrap;
-    gap: 10px;
-    padding: 10px 14px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 14px;
   }
   .header-left {
+    width: 100%;
+    justify-content: space-between;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 8px;
   }
   .now-banner,
   .now-banner.dynamic-island {
-    order: 3;
-    flex: 1 1 100%;
-    max-width: 100%;
-    min-width: 0;
+    order: -1;
+    align-self: center;
+    flex: 0 0 auto;
+    width: auto;
+    max-width: min(300px, calc(100vw - 24px));
+    min-width: 180px;
+    padding: 3px 10px;
+  }
+  .now-banner.dynamic-island .island-compact {
+    min-height: 22px;
+    gap: 6px;
+  }
+  .now-banner.dynamic-island .now-badge-wrap {
+    padding: 1px 6px;
+    font-size: 9px;
+    gap: 4px;
+  }
+  .now-banner.dynamic-island .pulse-dot {
+    width: 5px;
+    height: 5px;
+  }
+  .now-banner.dynamic-island .island-ring-wrap,
+  .now-banner.dynamic-island .island-ring {
+    width: 16px;
+    height: 16px;
+  }
+  .now-banner.dynamic-island .now-title {
+    font-size: 11px;
+    max-width: 150px;
+  }
+  .now-banner.dynamic-island .now-remaining {
+    font-size: 10px;
+  }
+  .now-banner.dynamic-island .island-chevron {
+    font-size: 9px;
   }
   .header-right {
+    width: 100%;
+    justify-content: space-between;
     flex-wrap: wrap;
   }
   .workspace-grid {
@@ -2316,21 +2410,6 @@ html[data-theme="light"] .modal-backdrop {
 
   .hour-rows-layer {
     touch-action: pan-y manipulation;
-  }
-
-  /* 터치 시 hover 고착으로 다이나믹 아일랜드가 멋대로 열리지 않도록 차단 (탭으로만 토글) */
-  .now-banner.dynamic-island:hover:not(.is-expanded) {
-    transform: none;
-  }
-  .now-banner.dynamic-island:hover:not(.is-expanded) .island-chevron {
-    transform: none;
-    color: #94a3b8;
-  }
-  .now-banner.dynamic-island:hover:not(.is-expanded) .island-expanded,
-  .now-banner.dynamic-island:focus-within:not(.is-expanded) .island-expanded {
-    transform: translateX(calc(-50% + var(--island-offset-x, 0px))) translateY(-8px) scale(0.94);
-    opacity: 0;
-    pointer-events: none;
   }
 
   /* 이벤트 블록: 기본은 세로 스크롤(pan-y) 허용, 한 번 탭해 선택(.is-selected)되어 핸들이 활성화되면 이동/리사이즈 가능 */
