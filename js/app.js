@@ -16,6 +16,8 @@
   let activeHtmlDragPayload = null;
   let toastTimer = null;
   let lastNowRenderMin = -1;
+  let isBackgroundSyncing = false;
+  let lastSyncCheckAt = 0;
 
   const el = {
     datePicker: document.getElementById("datePicker"),
@@ -295,6 +297,47 @@
     renderAll();
     if (scrollOptimal) {
       scrollToOptimalPosition();
+    }
+  }
+
+  function getScheduleSignature(list) {
+    return (list || [])
+      .map((s) => `${s.id}|${s.updated_at || ""}|${s.done ? 1 : 0}|${s.start_at || ""}|${s.end_at || ""}|${s.title}|${s.type}|${s.memo || ""}`)
+      .join("\n");
+  }
+
+  function isAutoSyncPaused() {
+    if (document.hidden || isBackgroundSyncing || activeHtmlDragPayload) return true;
+    if (document.querySelector(".modal-backdrop:not(.hidden)")) return true;
+    const s = PlannerAPI.getSettings();
+    if (s.mode === "agent" && (!s.agentApiUrl || !s.agentApiToken)) return true;
+    return false;
+  }
+
+  async function syncIfChanged(showNotify = true) {
+    const now = Date.now();
+    if (now - lastSyncCheckAt < 2000) return;
+    if (isAutoSyncPaused()) return;
+
+    lastSyncCheckAt = now;
+    isBackgroundSyncing = true;
+    const targetDate = currentDate;
+
+    try {
+      const fresh = await PlannerAPI.fetchSchedules(targetDate);
+      if (targetDate !== currentDate || isAutoSyncPaused()) return;
+
+      if (getScheduleSignature(fresh) !== getScheduleSignature(schedules)) {
+        schedules = fresh;
+        renderAll();
+        if (showNotify) {
+          showToast("일정 변경사항이 자동 반영되었습니다.");
+        }
+      }
+    } catch {
+      // 백그라운드 동기화 실패 시 조용히 다음 주기에 재시도
+    } finally {
+      isBackgroundSyncing = false;
     }
   }
 
@@ -1632,11 +1675,20 @@
 
   bindControls();
   loadDay(currentDate);
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) syncIfChanged(true);
+  });
+  window.addEventListener("focus", () => {
+    syncIfChanged(true);
+  });
+
   setInterval(() => {
     const curMin = getNowKstMinutes();
     if (curMin !== lastNowRenderMin) {
       renderEvents();
     }
     renderNowState();
+    syncIfChanged(true);
   }, 15000);
 })();
