@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Muse Elastic Planner — 일간 타임라인 플래너</title>
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-  <link rel="stylesheet" href="./css/style.css?v=20261114-10" />
+  <link rel="stylesheet" href="./css/style.css?v=20261114-11" />
 </head>
 <body>
   <!-- 로그인 화면 (가계부와 동일 Supabase Auth) -->
@@ -40,7 +40,7 @@
     </div>
   </div>
 
-  <div class="app-shell">
+  <div id="appShell" class="app-shell" data-mobile-tab="timeline">
     <!-- 상단 컨트롤 & 지금 하는 일(NOW) 배너 -->
     <header class="top-header">
       <div class="header-left">
@@ -58,15 +58,17 @@
           </div>
         </div>
 
-        <div class="date-nav">
-          <button id="prevDayBtn" class="icon-btn icon-btn-sm" title="이전 날짜" aria-label="이전 날짜">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-          </button>
-          <input id="datePicker" type="date" class="date-input" aria-label="날짜 선택" />
-          <button id="todayBtn" class="chip-btn today-btn">오늘</button>
-          <button id="nextDayBtn" class="icon-btn icon-btn-sm" title="다음 날짜" aria-label="다음 날짜">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-          </button>
+        <div id="desktopDateSlot" class="desktop-date-slot">
+          <div id="dateNav" class="date-nav">
+            <button id="prevDayBtn" class="icon-btn icon-btn-sm" title="이전 날짜" aria-label="이전 날짜">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            </button>
+            <input id="datePicker" type="date" class="date-input" aria-label="날짜 선택" />
+            <button id="todayBtn" class="chip-btn today-btn">오늘</button>
+            <button id="nextDayBtn" class="icon-btn icon-btn-sm" title="다음 날짜" aria-label="다음 날짜">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -157,51 +159,63 @@
     <main class="workspace-grid">
       <!-- 1. 좌측 패널: 시간 미정 할 일 / 보류 도크 (start_at = null) -->
       <aside id="stagingDock" class="panel left-panel">
-        <div class="panel-header">
+        <div id="stagingHeaderToggle" class="panel-header panel-header-collapsible" role="button" tabindex="0" aria-expanded="true">
           <div>
             <h2>📥 시간 미정 할 일</h2>
             <p class="panel-desc">타임라인으로 끌어 시간 배정</p>
           </div>
-          <span id="stagedCountBadge" class="count-badge">0</span>
-        </div>
-
-        <form id="addStagedForm" class="quick-add-box">
-          <input id="newStagedTitle" type="text" placeholder="시간 미정 일정/할 일 빠르게 추가 (Enter)..." required />
-          <div class="quick-add-row">
-            <select id="newStagedType" aria-label="일정 유형">
-              <option value="task" selected>✅ 할 일 (task)</option>
-              <option value="schedule">📅 일정 (schedule)</option>
-              <option value="reminder">🔔 알림 (reminder)</option>
-            </select>
-            <button type="submit" class="btn-add-sm">+ 추가</button>
+          <div class="panel-header-right">
+            <span id="stagedCountBadge" class="count-badge">0</span>
+            <span class="collapse-chevron" aria-hidden="true">▾</span>
           </div>
-        </form>
-
-        <div class="dock-drop-hint" id="dockDropHint">
-          여기에 놓으면 시간을 비우고 <strong>시간 미정</strong>으로 옮깁니다
         </div>
 
-        <div class="panel-scroll">
-          <section class="dock-section">
-            <div class="section-title-row">
-              <span>📌 미배치 목록</span>
-              <span id="untimedCount" class="mini-count">0</span>
+        <div id="stagingDockBody" class="dock-collapsible-body">
+          <form id="addStagedForm" class="quick-add-box">
+            <input id="newStagedTitle" type="text" placeholder="시간 미정 일정/할 일 빠르게 추가 (Enter)..." required />
+            <div class="quick-add-row">
+              <select id="newStagedType" aria-label="일정 유형">
+                <option value="task" selected>✅ 할 일 (task)</option>
+                <option value="schedule">📅 일정 (schedule)</option>
+                <option value="reminder">🔔 알림 (reminder)</option>
+              </select>
+              <button type="submit" class="btn-add-sm">+ 추가</button>
             </div>
-            <div id="untimedList" class="card-stack"></div>
-          </section>
+          </form>
 
-          <section class="dock-section">
-            <div class="section-title-row">
-              <span>🔔 오늘의 알림 모아보기</span>
-              <span id="reminderSummaryCount" class="mini-count">0</span>
-            </div>
-            <div id="reminderHighlightList" class="card-stack"></div>
-          </section>
+          <div class="dock-drop-hint" id="dockDropHint">
+            여기에 놓으면 시간을 비우고 <strong>시간 미정</strong>으로 옮깁니다
+          </div>
+
+          <div class="panel-scroll">
+            <section class="dock-section">
+              <button type="button" class="section-title-row section-collapse-btn" data-collapse-target="untimedList" aria-expanded="true">
+                <span>📌 미배치 목록</span>
+                <span class="section-title-right">
+                  <span id="untimedCount" class="mini-count">0</span>
+                  <span class="section-chevron" aria-hidden="true">▾</span>
+                </span>
+              </button>
+              <div id="untimedList" class="card-stack"></div>
+            </section>
+
+            <section class="dock-section">
+              <button type="button" class="section-title-row section-collapse-btn" data-collapse-target="reminderHighlightList" aria-expanded="true">
+                <span>🔔 오늘의 알림 모아보기</span>
+                <span class="section-title-right">
+                  <span id="reminderSummaryCount" class="mini-count">0</span>
+                  <span class="section-chevron" aria-hidden="true">▾</span>
+                </span>
+              </button>
+              <div id="reminderHighlightList" class="card-stack"></div>
+            </section>
+          </div>
         </div>
       </aside>
 
       <!-- 2. 중앙 패널: 인터랙티브 KST 타임라인 -->
       <section class="panel center-panel">
+        <div id="mobileDateSlot" class="mobile-date-slot"></div>
         <div class="timeline-toolbar">
           <div class="filter-chips" id="typeFilterBar">
             <button class="filter-chip active" data-type="all">전체</button>
@@ -316,6 +330,31 @@
         </div>
       </aside>
     </main>
+
+    <!-- 모바일 플로팅 일정 추가 버튼 -->
+    <button id="mobileAddFab" type="button" class="mobile-add-fab" aria-label="새 일정 추가" title="새 일정 추가">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+    </button>
+
+    <!-- 모바일 하단 네비게이션 탭 바 -->
+    <nav id="mobileTabBar" class="mobile-tab-bar" aria-label="모바일 화면 전환">
+      <button type="button" class="mobile-tab-btn active" data-mobile-tab="timeline">
+        <span class="mobile-tab-icon">📅</span>
+        <span class="mobile-tab-label">타임라인</span>
+      </button>
+      <button type="button" class="mobile-tab-btn" data-mobile-tab="dock">
+        <span class="mobile-tab-icon">📥</span>
+        <span class="mobile-tab-label">할 일·알림</span>
+        <span id="mobileDockBadge" class="mobile-tab-badge hidden">0</span>
+      </button>
+      <button type="button" class="mobile-tab-btn" data-mobile-tab="summary">
+        <span class="mobile-tab-icon">🧩</span>
+        <span class="mobile-tab-label">요약·위젯</span>
+      </button>
+    </nav>
   </div>
 
   <!-- 일정 생성 / 세부 수정 모달 -->
@@ -637,7 +676,7 @@
   <!-- 토스트 알림 -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./js/api.js?v=20261114-10"></script>
-  <script src="./js/app.js?v=20261114-10"></script>
+  <script src="./js/api.js?v=20261114-11"></script>
+  <script src="./js/app.js?v=20261114-11"></script>
 </body>
 </html>

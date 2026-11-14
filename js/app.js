@@ -37,6 +37,10 @@
   let supabaseSession = null;
 
   const el = {
+    appShell: document.getElementById("appShell"),
+    desktopDateSlot: document.getElementById("desktopDateSlot"),
+    mobileDateSlot: document.getElementById("mobileDateSlot"),
+    dateNav: document.getElementById("dateNav"),
     datePicker: document.getElementById("datePicker"),
     prevDayBtn: document.getElementById("prevDayBtn"),
     nextDayBtn: document.getElementById("nextDayBtn"),
@@ -71,7 +75,11 @@
     apiSourceLabel: document.getElementById("apiSourceLabel"),
 
     stagingDock: document.getElementById("stagingDock"),
+    stagingHeaderToggle: document.getElementById("stagingHeaderToggle"),
     stagedCountBadge: document.getElementById("stagedCountBadge"),
+    mobileTabBar: document.getElementById("mobileTabBar"),
+    mobileDockBadge: document.getElementById("mobileDockBadge"),
+    mobileAddFab: document.getElementById("mobileAddFab"),
     addStagedForm: document.getElementById("addStagedForm"),
     newStagedTitle: document.getElementById("newStagedTitle"),
     newStagedType: document.getElementById("newStagedType"),
@@ -988,6 +996,11 @@
     el.stagedCountBadge.textContent = String(untimed.length);
     el.untimedCount.textContent = String(untimed.length);
     el.reminderSummaryCount.textContent = String(reminders.length);
+    if (el.mobileDockBadge) {
+      const pendingDockCount = untimed.filter((s) => !s.done).length;
+      el.mobileDockBadge.textContent = String(pendingDockCount);
+      el.mobileDockBadge.classList.toggle("hidden", pendingDockCount === 0);
+    }
 
     const untimedKey = untimed.map((s) => `${s.id}:${s.done ? 1 : 0}:${s.type}:${s.title}`).join("|");
     if (el.untimedList.dataset.renderKey !== untimedKey) {
@@ -2423,10 +2436,70 @@
       });
     });
 
-    el.addEventBtn.addEventListener("click", () => {
+    const openQuickNewEvent = () => {
       const dur = getDefaultDurationMin();
       const next = findNextAvailableSlot(dur);
       openNewEventModal(next, Math.min(1440, next + dur));
+    };
+
+    el.addEventBtn.addEventListener("click", openQuickNewEvent);
+    if (el.mobileAddFab) {
+      el.mobileAddFab.addEventListener("click", openQuickNewEvent);
+    }
+
+    // 모바일 반응형: 날짜 네비게이션을 타임라인 바로 위로 이동 & 하단 탭 전환
+    const mobileMq = window.matchMedia("(max-width: 960px)");
+    const syncResponsiveDateNav = () => {
+      if (!el.dateNav || !el.desktopDateSlot || !el.mobileDateSlot) return;
+      const targetSlot = mobileMq.matches ? el.mobileDateSlot : el.desktopDateSlot;
+      if (el.dateNav.parentElement !== targetSlot) {
+        targetSlot.appendChild(el.dateNav);
+      }
+      alignDynamicIsland();
+    };
+    syncResponsiveDateNav();
+    if (mobileMq.addEventListener) {
+      mobileMq.addEventListener("change", syncResponsiveDateNav);
+    } else {
+      window.addEventListener("resize", syncResponsiveDateNav);
+    }
+
+    if (el.mobileTabBar && el.appShell) {
+      el.mobileTabBar.querySelectorAll(".mobile-tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const tab = btn.dataset.mobileTab || "timeline";
+          el.appShell.dataset.mobileTab = tab;
+          el.mobileTabBar.querySelectorAll(".mobile-tab-btn").forEach((b) => {
+            b.classList.toggle("active", b === btn);
+          });
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          alignDynamicIsland();
+        });
+      });
+    }
+
+    // 시간 미정 할 일 패널 및 내부 섹션 터치 접기/펼치기
+    if (el.stagingHeaderToggle && el.stagingDock) {
+      const toggleStagingCollapse = () => {
+        const collapsed = el.stagingDock.classList.toggle("is-collapsed");
+        el.stagingHeaderToggle.setAttribute("aria-expanded", String(!collapsed));
+      };
+      el.stagingHeaderToggle.addEventListener("click", toggleStagingCollapse);
+      el.stagingHeaderToggle.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggleStagingCollapse();
+        }
+      });
+    }
+
+    document.querySelectorAll(".section-collapse-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const section = btn.closest(".dock-section");
+        if (!section) return;
+        const collapsed = section.classList.toggle("is-collapsed");
+        btn.setAttribute("aria-expanded", String(!collapsed));
+      });
     });
 
     // 좌측 시간 미정 추가
