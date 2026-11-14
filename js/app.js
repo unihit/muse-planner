@@ -1927,13 +1927,8 @@
 
   function bindReminderMarkerInteractions(marker, pill, ev) {
     pill.addEventListener("pointerdown", (e) => {
-      if (e.target.closest("input, button")) return;
+      if (e.target.closest("button")) return;
       e.stopPropagation();
-    });
-    pill.addEventListener("click", (e) => {
-      if (e.target.closest("input, button")) return;
-      e.stopPropagation();
-      openEventModal(ev.id);
     });
   }
 
