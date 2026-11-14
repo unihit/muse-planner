@@ -1179,7 +1179,8 @@ html[data-theme="light"] .action-btn {
 /* 데스크톱에서는 모바일 전용 요소 숨김 */
 .mobile-date-slot,
 .mobile-tab-bar,
-.mobile-add-fab {
+.mobile-add-fab,
+.mobile-undo-fab {
   display: none;
 }
 
@@ -3914,6 +3915,31 @@ html[data-theme="light"] .modal-backdrop {
     font-weight: 700;
     display: grid;
     place-items: center;
+  }
+  .mobile-undo-fab {
+    display: grid;
+    place-items: center;
+    position: fixed;
+    right: 19px;
+    bottom: calc(168px + env(safe-area-inset-bottom));
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid var(--border-strong);
+    color: var(--text);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    z-index: 205;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
+  .mobile-undo-fab:active {
+    transform: scale(0.92);
+  }
+  html[data-theme="light"] .mobile-undo-fab {
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
   }
   .mobile-add-fab {
     display: grid;

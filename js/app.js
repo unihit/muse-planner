@@ -104,6 +104,7 @@
     stagedCountBadge: document.getElementById("stagedCountBadge"),
     mobileTabBar: document.getElementById("mobileTabBar"),
     mobileDockBadge: document.getElementById("mobileDockBadge"),
+    mobileUndoFab: document.getElementById("mobileUndoFab"),
     mobileAddFab: document.getElementById("mobileAddFab"),
     modalUntimedPicker: document.getElementById("modalUntimedPicker"),
     modalUntimedChips: document.getElementById("modalUntimedChips"),
@@ -315,11 +316,44 @@
   }
 
   function updateUndoButton() {
-    if (!el.undoBtn) return;
-    el.undoBtn.disabled = undoStack.length === 0;
-    el.undoBtn.title = undoStack.length
+    const hasUndo = undoStack.length > 0;
+    const titleText = hasUndo
       ? `실행 취소 (Ctrl+Z): ${undoStack[undoStack.length - 1].label}`
       : "실행 취소 (Ctrl+Z)";
+    if (el.undoBtn) {
+      el.undoBtn.disabled = !hasUndo;
+      el.undoBtn.title = titleText;
+    }
+    if (el.mobileUndoFab) {
+      el.mobileUndoFab.classList.toggle("hidden", !hasUndo);
+      el.mobileUndoFab.title = titleText;
+    }
+  }
+
+  function showUndoToast(msg, icon, undoEntry, durationMs = 4500) {
+    if (!undoEntry) {
+      showToast(msg, icon, { durationMs });
+      return;
+    }
+    showToast(msg, icon, {
+      durationMs,
+      action: {
+        label: "되돌리기",
+        onClick: async () => {
+          const idx = undoStack.indexOf(undoEntry);
+          if (idx === -1) return;
+          undoStack.splice(idx, 1);
+          updateUndoButton();
+          try {
+            lastUserMutationAt = Date.now();
+            await undoEntry.undo();
+            showToast(`되돌림: ${undoEntry.label}`, "↩️");
+          } catch (err) {
+            showToast(`되돌리기 실패: ${err.message}`, "⚠️");
+          }
+        }
+      }
+    });
   }
 
   function pushUndoAction(label, undoFn) {
@@ -1286,12 +1320,12 @@
       await loadDay(created.date, false);
     }
 
-    pushUndoAction(`'${created.title}' 등록`, async () => {
+    const undoEntry = pushUndoAction(`'${created.title}' 등록`, async () => {
       await deleteScheduleById(created.id, { recordUndo: false, targetDate: created.date });
     });
 
     if (toastMsg) {
-      showToast(toastMsg, "✅");
+      showUndoToast(toastMsg, "✅", undoEntry);
     }
     return created;
   }
@@ -1322,8 +1356,9 @@
     }
     renderAll();
 
+    let undoEntry = null;
     if (recordUndo) {
-      pushUndoAction(`'${prev.title}' 완료 상태`, async () => {
+      undoEntry = pushUndoAction(`'${prev.title}' 완료 상태`, async () => {
         await toggleScheduleDone(id, prev.done, { recordUndo: false });
       });
     }
@@ -1343,7 +1378,7 @@
         renderAll();
       }
       if (recordUndo) {
-        showToast(checked ? `'${prev.title}' 완료!` : `'${prev.title}' 완료 해제`, checked ? "✅" : "↩️");
+        showUndoToast(checked ? `'${prev.title}' 완료!` : `'${prev.title}' 완료 해제`, checked ? "✅" : "↩️", undoEntry);
       }
     } catch (err) {
       if (isBacklog) {
@@ -1413,25 +1448,7 @@
             await loadDay(finalRec.date, false);
           }
         });
-        showToast(`'${snapshot.title}' 삭제됨`, "🗑️", {
-          durationMs: 5500,
-          action: {
-            label: "되돌리기",
-            onClick: async () => {
-              const idx = undoStack.indexOf(undoEntry);
-              if (idx === -1) return;
-              undoStack.splice(idx, 1);
-              updateUndoButton();
-              try {
-                lastUserMutationAt = Date.now();
-                await undoEntry.undo();
-                showToast(`'${snapshot.title}' 복구됨`, "↩️");
-              } catch (err) {
-                showToast(`복구 실패: ${err.message}`, "⚠️");
-              }
-            }
-          }
-        });
+        showUndoToast(`'${snapshot.title}' 삭제됨`, "🗑️", undoEntry, 5500);
       }
     } catch (err) {
       schedules = prevSchedules;
@@ -1517,8 +1534,9 @@
     syncSwrCacheIfCurrent(currentDate, schedules);
     renderAll();
 
+    let undoEntry = null;
     if (recordUndo) {
-      pushUndoAction(`'${ev.title}' 시간 변경`, async () => {
+      undoEntry = pushUndoAction(`'${ev.title}' 시간 변경`, async () => {
         const undoMap = new Map(affectedSnapshots.map((snapItem) => [snapItem.id, snapItem]));
         schedules = PlannerAPI.sortSchedules(
           schedules.map((item) => {
@@ -1557,6 +1575,9 @@
       schedules = PlannerAPI.sortSchedules(schedules.map((item) => resultMap.get(item.id) || item));
       syncSwrCacheIfCurrent(currentDate, schedules);
       renderAll();
+      if (recordUndo && undoEntry && !hasCustomStart) {
+        showUndoToast(`'${ev.title}' 시간 변경됨`, "🕒", undoEntry, 4000);
+      }
     } catch (err) {
       schedules = prevSchedulesSnapshot;
       syncSwrCacheIfCurrent(currentDate, schedules);
@@ -4358,6 +4379,9 @@
     if (el.mobileAddFab) {
       el.mobileAddFab.addEventListener("click", openQuickNewEvent);
     }
+    if (el.mobileUndoFab) {
+      el.mobileUndoFab.addEventListener("click", () => undoLastAction());
+    }
 
     // 모바일 반응형: 날짜 네비게이션을 타임라인 바로 위로 이동 & 하단 탭 전환
     const mobileMq = window.matchMedia("(max-width: 960px)");
@@ -4526,6 +4550,7 @@
             syncSwrCacheIfCurrent(null, backlogItems);
             await loadDay(dateVal, false);
           }
+          let editUndoEntry = null;
           if (prevEv) {
             const snapPatch = {
               date: prevEv.date,
@@ -4536,7 +4561,7 @@
               done: prevEv.done,
               memo: prevEv.memo || ""
             };
-            pushUndoAction(`'${prevEv.title}' 수정`, async () => {
+            editUndoEntry = pushUndoAction(`'${prevEv.title}' 수정`, async () => {
               lastUserMutationAt = Date.now();
               const reverted = await PlannerAPI.patchSchedule(id, snapPatch, payload.date);
               if (reverted && (reverted.date === null || reverted.date === currentDate)) {
@@ -4550,7 +4575,7 @@
               }
             });
           }
-          showToast(isBacklog ? "나중에 할 일을 수정했습니다." : "일정을 수정했습니다.", "✏️");
+          showUndoToast(isBacklog ? "나중에 할 일을 수정했습니다." : "일정을 수정했습니다.", "✏️", editUndoEntry);
         } else {
           await createScheduleAndRecord(
             {
