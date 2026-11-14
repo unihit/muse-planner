@@ -2789,6 +2789,20 @@ html[data-theme="light"] .modal-backdrop {
   border-color: var(--accent);
 }
 
+.settings-time-range {
+  gap: 6px;
+}
+
+.settings-time-range select {
+  min-width: 102px;
+}
+
+.settings-range-sep {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
 .settings-range-wrap input[type="range"] {
   width: 112px;
   accent-color: var(--accent);

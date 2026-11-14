@@ -162,6 +162,7 @@
     zoomRange: document.getElementById("zoomRange"),
     zoomValueLabel: document.getElementById("zoomValueLabel"),
     defaultDurationSelect: document.getElementById("defaultDurationSelect"),
+    earlyStartHourSelect: document.getElementById("earlyStartHourSelect"),
     earlyEndHourSelect: document.getElementById("earlyEndHourSelect"),
     earlyCollapsedCheck: document.getElementById("earlyCollapsedCheck"),
     cascadeCheck: document.getElementById("cascadeCheck"),
@@ -286,10 +287,21 @@
 
   /* -------------------- 좌표 <-> 시간 변환 -------------------- */
 
-  function getEarlyEndMin() {
-    const h = Number(prefs.earlyEndHour);
-    const clampedHour = Number.isFinite(h) ? clamp(Math.round(h), 5, 9) : 7;
+  function getEarlyStartMin() {
+    const h = Number(prefs.earlyStartHour);
+    const clampedHour = Number.isFinite(h) ? clamp(Math.round(h), 0, 11) : 0;
     return clampedHour * 60;
+  }
+
+  function getEarlyEndMin() {
+    const startH = Math.round(getEarlyStartMin() / 60);
+    const h = Number(prefs.earlyEndHour);
+    const clampedHour = Number.isFinite(h) ? clamp(Math.round(h), startH + 1, 12) : Math.max(startH + 1, 7);
+    return clampedHour * 60;
+  }
+
+  function getTimelineMinBound() {
+    return prefs.earlyCollapsed && getEarlyStartMin() === 0 ? getEarlyEndMin() : 0;
   }
 
   function getDefaultDurationMin() {
@@ -301,27 +313,41 @@
     if (!prefs.earlyCollapsed) {
       return min * prefs.pxPerMin;
     }
+    const earlyStartMin = getEarlyStartMin();
     const earlyEndMin = getEarlyEndMin();
-    if (min <= earlyEndMin) {
-      return (min / earlyEndMin) * COLLAPSED_EARLY_HEIGHT;
+    if (min <= earlyStartMin) {
+      return min * prefs.pxPerMin;
     }
-    return COLLAPSED_EARLY_HEIGHT + (min - earlyEndMin) * prefs.pxPerMin;
+    if (min < earlyEndMin) {
+      return (
+        earlyStartMin * prefs.pxPerMin +
+        ((min - earlyStartMin) / (earlyEndMin - earlyStartMin)) * COLLAPSED_EARLY_HEIGHT
+      );
+    }
+    return earlyStartMin * prefs.pxPerMin + COLLAPSED_EARLY_HEIGHT + (min - earlyEndMin) * prefs.pxPerMin;
   }
 
   function yToMin(y) {
     if (!prefs.earlyCollapsed) {
       return clamp(y / prefs.pxPerMin, 0, 1440);
     }
+    const earlyStartMin = getEarlyStartMin();
     const earlyEndMin = getEarlyEndMin();
-    if (y <= COLLAPSED_EARLY_HEIGHT) {
+    const collapsedTop = earlyStartMin * prefs.pxPerMin;
+    const collapsedBottom = collapsedTop + COLLAPSED_EARLY_HEIGHT;
+    if (y < collapsedTop) {
+      return clamp(y / prefs.pxPerMin, 0, earlyStartMin);
+    }
+    if (y <= collapsedBottom) {
       return earlyEndMin;
     }
-    return clamp(earlyEndMin + (y - COLLAPSED_EARLY_HEIGHT) / prefs.pxPerMin, earlyEndMin, 1440);
+    return clamp(earlyEndMin + (y - collapsedBottom) / prefs.pxPerMin, earlyEndMin, 1440);
   }
 
   function getTimelineTotalHeight() {
     if (!prefs.earlyCollapsed) return 1440 * prefs.pxPerMin;
-    return COLLAPSED_EARLY_HEIGHT + (1440 - getEarlyEndMin()) * prefs.pxPerMin;
+    const collapsedSpan = getEarlyEndMin() - getEarlyStartMin();
+    return (1440 - collapsedSpan) * prefs.pxPerMin + COLLAPSED_EARLY_HEIGHT;
   }
 
   /* -------------------- 상태 분류 & 컬럼 배치 -------------------- */
@@ -874,7 +900,10 @@
     if (el.zoomRange) el.zoomRange.value = String(prefs.pxPerMin);
     if (el.zoomValueLabel) el.zoomValueLabel.textContent = `${Number(prefs.pxPerMin).toFixed(2)}x`;
     if (el.defaultDurationSelect) el.defaultDurationSelect.value = String(getDefaultDurationMin());
-    if (el.earlyEndHourSelect) el.earlyEndHourSelect.value = String(Math.round(getEarlyEndMin() / 60));
+    const earlyStartHour = Math.round(getEarlyStartMin() / 60);
+    const earlyEndHour = Math.round(getEarlyEndMin() / 60);
+    if (el.earlyStartHourSelect) el.earlyStartHourSelect.value = String(earlyStartHour);
+    if (el.earlyEndHourSelect) el.earlyEndHourSelect.value = String(earlyEndHour);
     if (el.earlyCollapsedCheck) el.earlyCollapsedCheck.checked = Boolean(prefs.earlyCollapsed);
     if (el.cascadeCheck) el.cascadeCheck.checked = Boolean(prefs.cascadeMode);
     if (el.themeSelect) el.themeSelect.value = prefs.theme;
@@ -884,6 +913,7 @@
     if (el.earlyToggleBtn) {
       el.earlyToggleBtn.classList.toggle("active", prefs.earlyCollapsed);
       el.earlyToggleBtn.textContent = prefs.earlyCollapsed ? "🌙 새벽 접힘" : "☀️ 전체 24h";
+      el.earlyToggleBtn.title = `새벽 ${String(earlyStartHour).padStart(2, "0")}:00~${String(earlyEndHour).padStart(2, "0")}:00 접기/펼치기`;
     }
 
     Object.entries(prefs.widgets || {}).forEach(([key, visible]) => {
@@ -1129,49 +1159,69 @@
     el.timelineGrid.style.height = `${totalH}px`;
     el.hourRowsLayer.innerHTML = "";
 
+    const earlyStartMin = getEarlyStartMin();
     const earlyEndMin = getEarlyEndMin();
+    const earlyStartHour = Math.round(earlyStartMin / 60);
     const earlyEndHour = Math.round(earlyEndMin / 60);
+    const earlyStartLabel = `${String(earlyStartHour).padStart(2, "0")}:00`;
     const earlyEndLabel = `${String(earlyEndHour).padStart(2, "0")}:00`;
+    const hourPx = 60 * prefs.pxPerMin;
+
+    const appendHourRow = (h) => {
+      const row = document.createElement("div");
+      row.className = "hour-row";
+      row.style.height = `${hourPx}px`;
+      row.innerHTML = `<span class="hour-label">${String(h).padStart(2, "0")}:00</span>`;
+      el.hourRowsLayer.appendChild(row);
+    };
 
     if (prefs.earlyCollapsed) {
-      const earlyCount = schedules.filter((e) => e.hasStartAt && e.startMin < earlyEndMin).length;
+      for (let h = 0; h < earlyStartHour; h++) {
+        appendHourRow(h);
+      }
+
+      const earlyCount = schedules.filter(
+        (e) => e.hasStartAt && e.visualEndMin > earlyStartMin && e.startMin < earlyEndMin
+      ).length;
       const banner = document.createElement("div");
       banner.className = "early-collapsed-banner";
       banner.style.height = `${COLLAPSED_EARLY_HEIGHT}px`;
-      banner.innerHTML = `<span>🌙 새벽 00:00 ~ ${earlyEndLabel} 접힘 (클릭해 펼치기${earlyCount ? ` · 일정 ${earlyCount}개` : ""})</span>`;
+      banner.innerHTML = `<span>🌙 새벽 ${earlyStartLabel} ~ ${earlyEndLabel} 접힘 (클릭해 펼치기${earlyCount ? ` · 일정 ${earlyCount}개` : ""})</span>`;
       banner.addEventListener("click", () => {
         prefs.earlyCollapsed = false;
         PlannerAPI.savePrefs(prefs);
         renderAll();
       });
       el.hourRowsLayer.appendChild(banner);
-    }
 
-    const startHour = prefs.earlyCollapsed ? earlyEndHour : 0;
-    const hourPx = 60 * prefs.pxPerMin;
-    for (let h = startHour; h < 24; h++) {
-      const row = document.createElement("div");
-      row.className = "hour-row";
-      row.style.height = `${hourPx}px`;
-      row.innerHTML = `<span class="hour-label">${String(h).padStart(2, "0")}:00</span>`;
-      el.hourRowsLayer.appendChild(row);
+      for (let h = earlyEndHour; h < 24; h++) {
+        appendHourRow(h);
+      }
+    } else {
+      for (let h = 0; h < 24; h++) {
+        appendHourRow(h);
+      }
     }
   }
 
   function renderEvents() {
     el.eventsLayer.innerHTML = "";
+    const earlyStartMin = getEarlyStartMin();
     const earlyEndMin = getEarlyEndMin();
 
     const timedEvents = schedules.filter((ev) => {
       if (!ev.hasStartAt) return false;
-      if (prefs.earlyCollapsed && ev.visualEndMin <= earlyEndMin) return false;
+      if (prefs.earlyCollapsed && ev.startMin >= earlyStartMin && ev.visualEndMin <= earlyEndMin) return false;
       return true;
     });
 
     const cols = computeEventColumns(timedEvents);
 
     for (const ev of timedEvents) {
-      const visualStart = prefs.earlyCollapsed ? Math.max(earlyEndMin, ev.startMin) : ev.startMin;
+      const visualStart =
+        prefs.earlyCollapsed && ev.startMin >= earlyStartMin && ev.startMin < earlyEndMin
+          ? earlyEndMin
+          : ev.startMin;
       const top = minToY(visualStart);
       const bottom = minToY(ev.visualEndMin);
       const height = Math.max(26, bottom - top);
@@ -1320,7 +1370,10 @@
     }
 
     const { startMin, endMin } = touchDraftSlot;
-    const visualStart = prefs.earlyCollapsed ? Math.max(getEarlyEndMin(), startMin) : startMin;
+    const earlyStartMin = getEarlyStartMin();
+    const earlyEndMin = getEarlyEndMin();
+    const visualStart =
+      prefs.earlyCollapsed && startMin >= earlyStartMin && startMin < earlyEndMin ? earlyEndMin : startMin;
     const top = minToY(visualStart);
     const h = Math.max(30, minToY(endMin) - top);
 
@@ -1424,8 +1477,9 @@
         block.classList.add("is-dragging");
 
         const deltaMin = snap(dy / prefs.pxPerMin);
+        const earlyStartMin = getEarlyStartMin();
         const earlyEndMin = getEarlyEndMin();
-        const minBound = prefs.earlyCollapsed ? earlyEndMin : 0;
+        const minBound = getTimelineMinBound();
 
         if (mode === "move") {
           previewStart = clamp(origStart + deltaMin, minBound, 1440 - origVisualDur);
@@ -1448,7 +1502,10 @@
           previewVisualEnd = ceiling;
         }
 
-        const visualStart = prefs.earlyCollapsed ? Math.max(earlyEndMin, previewStart) : previewStart;
+        const visualStart =
+          prefs.earlyCollapsed && previewStart >= earlyStartMin && previewStart < earlyEndMin
+            ? earlyEndMin
+            : previewStart;
         const top = minToY(visualStart);
         const height = Math.max(26, minToY(previewVisualEnd) - top);
         block.style.top = `${top}px`;
@@ -1560,7 +1617,7 @@
 
           const gridRect = el.timelineGrid.getBoundingClientRect();
           const y = tapStartY - gridRect.top;
-          const minBound = prefs.earlyCollapsed ? getEarlyEndMin() : 0;
+          const minBound = getTimelineMinBound();
           const defaultSpan = getDefaultDurationMin();
           const anchorMin = clamp(snap(yToMin(y)), minBound, 1440 - Math.max(15, defaultSpan));
           const endMin = Math.min(1440, anchorMin + defaultSpan);
@@ -1644,7 +1701,7 @@
       const origStart = touchDraftSlot.startMin;
       const origEnd = touchDraftSlot.endMin;
       const step = prefs.snapMin || 15;
-      const minBound = prefs.earlyCollapsed ? getEarlyEndMin() : 0;
+      const minBound = getTimelineMinBound();
 
       const cleanupDraft = () => {
         window.removeEventListener("pointermove", onDraftMove);
@@ -1695,7 +1752,7 @@
       e.preventDefault();
       const span = Math.max(15, activeHtmlDragPayload.durationMin || getDefaultDurationMin());
       const y = e.clientY - el.timelineGrid.getBoundingClientRect().top;
-      const dropStart = clamp(snap(yToMin(y)), prefs.earlyCollapsed ? getEarlyEndMin() : 0, 1440 - span);
+      const dropStart = clamp(snap(yToMin(y)), getTimelineMinBound(), 1440 - span);
       const dropEnd = dropStart + span;
       const top = minToY(dropStart);
       const h = Math.max(24, minToY(dropEnd) - top);
@@ -1731,7 +1788,7 @@
 
       const span = Math.max(15, payload.durationMin || getDefaultDurationMin());
       const y = e.clientY - el.timelineGrid.getBoundingClientRect().top;
-      const dropStart = clamp(snap(yToMin(y)), prefs.earlyCollapsed ? getEarlyEndMin() : 0, 1440 - span);
+      const dropStart = clamp(snap(yToMin(y)), getTimelineMinBound(), 1440 - span);
       const dropEnd = payload.durationMin > 0 ? Math.min(1440, dropStart + payload.durationMin) : null;
 
       try {
@@ -1785,7 +1842,7 @@
 
   async function startScheduleNow(ev) {
     if (!ev) return;
-    const nowMin = clamp(getNowKstMinutes(), prefs.earlyCollapsed ? getEarlyEndMin() : 0, 1425);
+    const nowMin = clamp(getNowKstMinutes(), getTimelineMinBound(), 1425);
     const dur = ev.hasEndAt && ev.endMin !== null ? Math.max(15, ev.endMin - ev.startMin) : getDefaultDurationMin();
     const nextEnd = Math.min(1440, nowMin + dur);
     await commitScheduleTimeChange(ev, nowMin, nextEnd);
@@ -2401,11 +2458,30 @@
       showToast(`새 일정 기본 길이: ${getDefaultDurationMin()}분`);
     });
 
-    el.earlyEndHourSelect?.addEventListener("change", (e) => {
-      prefs.earlyEndHour = Number(e.target.value);
+    el.earlyStartHourSelect?.addEventListener("change", (e) => {
+      const startHour = clamp(Number(e.target.value), 0, 11);
+      prefs.earlyStartHour = startHour;
+      if ((Number(prefs.earlyEndHour) || 7) <= startHour) {
+        prefs.earlyEndHour = Math.min(12, startHour + 1);
+      }
       PlannerAPI.savePrefs(prefs);
       renderAll();
-      showToast(`새벽 접기 기준: ${String(Math.round(getEarlyEndMin() / 60)).padStart(2, "0")}:00`);
+      const sLabel = `${String(Math.round(getEarlyStartMin() / 60)).padStart(2, "0")}:00`;
+      const eLabel = `${String(Math.round(getEarlyEndMin() / 60)).padStart(2, "0")}:00`;
+      showToast(`새벽 접기 기준: ${sLabel} ~ ${eLabel}`);
+    });
+
+    el.earlyEndHourSelect?.addEventListener("change", (e) => {
+      const endHour = clamp(Number(e.target.value), 1, 12);
+      prefs.earlyEndHour = endHour;
+      if ((Number(prefs.earlyStartHour) || 0) >= endHour) {
+        prefs.earlyStartHour = Math.max(0, endHour - 1);
+      }
+      PlannerAPI.savePrefs(prefs);
+      renderAll();
+      const sLabel = `${String(Math.round(getEarlyStartMin() / 60)).padStart(2, "0")}:00`;
+      const eLabel = `${String(Math.round(getEarlyEndMin() / 60)).padStart(2, "0")}:00`;
+      showToast(`새벽 접기 기준: ${sLabel} ~ ${eLabel}`);
     });
 
     el.earlyCollapsedCheck?.addEventListener("change", (e) => {

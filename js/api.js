@@ -36,6 +36,7 @@
     pxPerMin: 1.45,
     cascadeMode: true,
     earlyCollapsed: true,
+    earlyStartHour: 0,
     earlyEndHour: 7,
     defaultDurationMin: 30,
     dimCompleted: true,
@@ -257,13 +258,19 @@
       const snapNum = Number(parsed.snapMin);
       const zoomNum = Number(parsed.pxPerMin);
       const durNum = Number(parsed.defaultDurationMin);
+      const earlyStartHour = clampInt(parsed.earlyStartHour, 0, 11, DEFAULT_PREFS.earlyStartHour);
+      let earlyEndHour = clampInt(parsed.earlyEndHour, 1, 12, DEFAULT_PREFS.earlyEndHour);
+      if (earlyEndHour <= earlyStartHour) {
+        earlyEndHour = Math.min(12, earlyStartHour + 1);
+      }
       return {
         theme: parsed.theme === "light" ? "light" : "dark",
         snapMin: [5, 10, 15, 30].includes(snapNum) ? snapNum : DEFAULT_PREFS.snapMin,
         pxPerMin: Number.isFinite(zoomNum) ? Math.max(1.0, Math.min(2.4, zoomNum)) : DEFAULT_PREFS.pxPerMin,
         cascadeMode: typeof parsed.cascadeMode === "boolean" ? parsed.cascadeMode : DEFAULT_PREFS.cascadeMode,
         earlyCollapsed: typeof parsed.earlyCollapsed === "boolean" ? parsed.earlyCollapsed : DEFAULT_PREFS.earlyCollapsed,
-        earlyEndHour: clampInt(parsed.earlyEndHour, 5, 9, DEFAULT_PREFS.earlyEndHour),
+        earlyStartHour,
+        earlyEndHour,
         defaultDurationMin: [15, 30, 45, 60, 90].includes(durNum) ? durNum : DEFAULT_PREFS.defaultDurationMin,
         dimCompleted: typeof parsed.dimCompleted === "boolean" ? parsed.dimCompleted : DEFAULT_PREFS.dimCompleted,
         browserNotify: typeof parsed.browserNotify === "boolean" ? parsed.browserNotify : DEFAULT_PREFS.browserNotify,
