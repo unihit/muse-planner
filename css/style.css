@@ -1865,11 +1865,16 @@ html[data-theme="light"] .event-block.type-reminder {
   font-size: 11px;
   font-weight: 700;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-  cursor: grab;
-  touch-action: none;
+  cursor: pointer;
+  touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
   transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease;
+}
+
+.reminder-marker-pill:hover {
+  transform: translateY(-50%) scale(1.02);
+  box-shadow: 0 6px 16px rgba(245, 158, 11, 0.28);
 }
 
 html[data-theme="light"] .reminder-marker-pill {
@@ -1931,16 +1936,6 @@ html[data-theme="light"] .reminder-marker-time {
 
 .reminder-line-marker.is-filtered-out {
   opacity: 0.18;
-}
-
-.reminder-line-marker.is-dragging {
-  z-index: 60;
-}
-
-.reminder-line-marker.is-dragging .reminder-marker-pill {
-  cursor: grabbing;
-  transform: translateY(-50%) scale(1.03);
-  box-shadow: 0 8px 20px rgba(245, 158, 11, 0.35);
 }
 html[data-theme="light"] .event-sub-row {
   color: #475569;

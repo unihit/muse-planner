@@ -1820,91 +1820,14 @@
   }
 
   function bindReminderMarkerInteractions(marker, pill, ev) {
-    const timeLabel = pill.querySelector(".reminder-marker-time");
     pill.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0 && e.pointerType === "mouse") return;
       if (e.target.closest("input, button")) return;
       e.stopPropagation();
-
-      const startX = e.clientX;
-      const startY = e.clientY;
-      const origStart = ev.startMin;
-      const origTop = minToY(origStart);
-      const minBound = getTimelineMinBound();
-      let previewStart = origStart;
-      let dragged = false;
-      let droppingToDock = false;
-      const dockGhostRef = { current: null };
-
-      const cleanup = () => {
-        marker.classList.remove("is-dragging");
-        clearDockDragState(marker, dockGhostRef);
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        window.removeEventListener("pointercancel", onCancel);
-      };
-
-      const onMove = (mv) => {
-        const dx = mv.clientX - startX;
-        const dy = mv.clientY - startY;
-        if (!dragged && Math.hypot(dx, dy) > 5) {
-          dragged = true;
-          marker.classList.add("is-dragging");
-        }
-        if (!dragged) return;
-        mv.preventDefault();
-
-        const { isOverDock, isLeavingTimeline } = syncDockDragState(
-          marker,
-          dockGhostRef,
-          ev,
-          mv.clientX,
-          mv.clientY
-        );
-        droppingToDock = isOverDock;
-
-        if (isLeavingTimeline) {
-          previewStart = origStart;
-          marker.style.top = `${origTop}px`;
-          if (timeLabel) timeLabel.textContent = `🔔 ${minToTimeStr(origStart)}`;
-          return;
-        }
-
-        const nextY = origTop + dy;
-        previewStart = clamp(snap(yToMin(nextY)), minBound, 1439);
-        marker.style.top = `${minToY(previewStart)}px`;
-        if (timeLabel) timeLabel.textContent = `🔔 ${minToTimeStr(previewStart)}`;
-      };
-
-      const onCancel = () => {
-        cleanup();
-        renderEvents();
-      };
-
-      const onUp = async () => {
-        cleanup();
-        if (!dragged) {
-          openEventModal(ev.id);
-          return;
-        }
-        if (droppingToDock) {
-          await commitScheduleTimeChange(ev, null, null, {
-            customStartIso: null,
-            customEndIso: null
-          });
-          showToast("시간 미정 목록으로 옮겼습니다.", "📥");
-          return;
-        }
-        if (previewStart !== origStart) {
-          await commitScheduleTimeChange(ev, previewStart, null);
-        } else {
-          renderEvents();
-        }
-      };
-
-      window.addEventListener("pointermove", onMove, { passive: false });
-      window.addEventListener("pointerup", onUp);
-      window.addEventListener("pointercancel", onCancel);
+    });
+    pill.addEventListener("click", (e) => {
+      if (e.target.closest("input, button")) return;
+      e.stopPropagation();
+      openEventModal(ev.id);
     });
   }
 
