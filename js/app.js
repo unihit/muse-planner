@@ -978,7 +978,32 @@
     }
   }
 
-  function scrollToOptimalPosition() {
+  function switchMobileTab(tab = "timeline") {
+    if (!el.appShell) return;
+    el.appShell.dataset.mobileTab = tab;
+    if (el.mobileTabBar) {
+      el.mobileTabBar.querySelectorAll(".mobile-tab-btn").forEach((b) => {
+        b.classList.toggle("active", (b.dataset.mobileTab || "timeline") === tab);
+      });
+    }
+    alignDynamicIsland();
+  }
+
+  function scrollTimelineToY(offsetY, smooth = true) {
+    if (!el.timelineScroll || !el.timelineGrid) return;
+    const clampedOffset = Math.max(0, offsetY);
+    if (el.timelineScroll.scrollHeight > el.timelineScroll.clientHeight + 2) {
+      el.timelineScroll.scrollTo({ top: clampedOffset, behavior: smooth ? "smooth" : "auto" });
+      return;
+    }
+    const gridTop = el.timelineGrid.getBoundingClientRect().top + window.scrollY;
+    window.scrollTo({
+      top: Math.max(0, gridTop + clampedOffset),
+      behavior: smooth ? "smooth" : "auto"
+    });
+  }
+
+  function scrollToOptimalPosition(smooth = false) {
     const earlyEndMin = getEarlyEndMin();
     const timed = schedules.filter((e) => e.hasStartAt);
     let targetMin = 540;
@@ -989,7 +1014,7 @@
     } else if (timed.length) {
       targetMin = Math.max(earlyEndMin, timed[0].startMin - 45);
     }
-    el.timelineScroll.scrollTop = Math.max(0, minToY(targetMin) - 18);
+    scrollTimelineToY(minToY(targetMin) - 18, smooth);
   }
 
   function syncSwrCacheIfCurrent(dateStr, list) {
@@ -2459,14 +2484,15 @@
   const ISLAND_RING_CIRCUMFERENCE = 2 * Math.PI * 7.5;
 
   function jumpToSchedule(ev) {
+    switchMobileTab("timeline");
+    setIslandExpanded(false);
     if (!ev || !ev.hasStartAt) {
-      scrollToOptimalPosition();
+      scrollToOptimalPosition(true);
       return;
     }
     selectedEventId = ev.id;
     renderEvents();
-    const y = Math.max(0, minToY(ev.startMin) - 80);
-    el.timelineScroll.scrollTo({ top: y, behavior: "smooth" });
+    scrollTimelineToY(minToY(ev.startMin) - 80, true);
   }
 
   async function startScheduleNow(ev) {
@@ -2621,7 +2647,12 @@
       el.nowPlus30Btn.classList.add("hidden");
       el.nowStartNowBtn.classList.add("hidden");
       el.nowDoneBtn.classList.add("hidden");
-      el.nowJumpBtn.onclick = (e) => { e.stopPropagation(); scrollToOptimalPosition(); };
+      el.nowJumpBtn.onclick = (e) => {
+        e.stopPropagation();
+        switchMobileTab("timeline");
+        setIslandExpanded(false);
+        scrollToOptimalPosition(true);
+      };
     }
 
     const memoText = focusEv?.memo?.trim() || "";
@@ -3641,13 +3672,8 @@
     if (el.mobileTabBar && el.appShell) {
       el.mobileTabBar.querySelectorAll(".mobile-tab-btn").forEach((btn) => {
         btn.addEventListener("click", () => {
-          const tab = btn.dataset.mobileTab || "timeline";
-          el.appShell.dataset.mobileTab = tab;
-          el.mobileTabBar.querySelectorAll(".mobile-tab-btn").forEach((b) => {
-            b.classList.toggle("active", b === btn);
-          });
+          switchMobileTab(btn.dataset.mobileTab || "timeline");
           window.scrollTo({ top: 0, behavior: "smooth" });
-          alignDynamicIsland();
         });
       });
     }
