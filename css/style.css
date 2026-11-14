@@ -1347,6 +1347,29 @@ html[data-theme="light"] .reminder-pill-time {
   color: var(--text-muted);
 }
 
+.section-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.placed-filter-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+}
+
+.placed-time-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .mini-btn:hover {
   background: var(--accent);
   color: #fff;

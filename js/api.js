@@ -41,6 +41,8 @@
     defaultDurationMin: 30,
     dimCompleted: true,
     browserNotify: false,
+    showPlacedList: true,
+    placedTasksOnly: false,
     widgets: {
       summary: true,
       youtube: true,
@@ -274,6 +276,8 @@
         defaultDurationMin: [15, 30, 45, 60, 90].includes(durNum) ? durNum : DEFAULT_PREFS.defaultDurationMin,
         dimCompleted: typeof parsed.dimCompleted === "boolean" ? parsed.dimCompleted : DEFAULT_PREFS.dimCompleted,
         browserNotify: typeof parsed.browserNotify === "boolean" ? parsed.browserNotify : DEFAULT_PREFS.browserNotify,
+        showPlacedList: typeof parsed.showPlacedList === "boolean" ? parsed.showPlacedList : DEFAULT_PREFS.showPlacedList,
+        placedTasksOnly: typeof parsed.placedTasksOnly === "boolean" ? parsed.placedTasksOnly : DEFAULT_PREFS.placedTasksOnly,
         widgets: { ...DEFAULT_PREFS.widgets, ...(parsed.widgets || {}) },
         presets: Array.isArray(parsed.presets) && parsed.presets.length ? parsed.presets : structuredCloneSafe(DEFAULT_PREFS.presets)
       };

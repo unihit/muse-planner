@@ -96,6 +96,10 @@
     newStagedType: document.getElementById("newStagedType"),
     untimedCount: document.getElementById("untimedCount"),
     untimedList: document.getElementById("untimedList"),
+    placedSection: document.getElementById("placedSection"),
+    placedCount: document.getElementById("placedCount"),
+    placedList: document.getElementById("placedList"),
+    placedTasksOnlyBtn: document.getElementById("placedTasksOnlyBtn"),
     reminderSummaryCount: document.getElementById("reminderSummaryCount"),
     reminderHighlightList: document.getElementById("reminderHighlightList"),
 
@@ -188,6 +192,7 @@
     themeSelect: document.getElementById("themeSelect"),
     dimCompletedCheck: document.getElementById("dimCompletedCheck"),
     browserNotifyCheck: document.getElementById("browserNotifyCheck"),
+    showPlacedListCheck: document.getElementById("showPlacedListCheck"),
     settingsWidgetChecks: document.getElementById("settingsWidgetChecks"),
     resetPresetsBtn: document.getElementById("resetPresetsBtn"),
     resetAllPrefsBtn: document.getElementById("resetAllPrefsBtn"),
@@ -1269,6 +1274,9 @@
     if (el.themeSelect) el.themeSelect.value = prefs.theme;
     if (el.dimCompletedCheck) el.dimCompletedCheck.checked = prefs.dimCompleted !== false;
     if (el.browserNotifyCheck) el.browserNotifyCheck.checked = Boolean(prefs.browserNotify);
+    if (el.showPlacedListCheck) el.showPlacedListCheck.checked = prefs.showPlacedList !== false;
+    if (el.placedSection) el.placedSection.classList.toggle("hidden", prefs.showPlacedList === false);
+    if (el.placedTasksOnlyBtn) el.placedTasksOnlyBtn.classList.toggle("is-active", Boolean(prefs.placedTasksOnly));
 
     if (el.earlyToggleBtn) {
       el.earlyToggleBtn.classList.toggle("active", prefs.earlyCollapsed);
@@ -1476,6 +1484,90 @@
           el.untimedList.appendChild(card);
         }
       });
+    }
+
+    if (el.placedList && el.placedCount) {
+      const placedAll = schedules
+        .filter((s) => s.hasStartAt)
+        .sort((a, b) => a.startMin - b.startMin);
+      const placedFiltered = prefs.placedTasksOnly
+        ? placedAll.filter((s) => s.type === "task")
+        : placedAll;
+      el.placedCount.textContent = String(placedFiltered.length);
+
+      if (prefs.showPlacedList !== false) {
+        const placedKey =
+          (prefs.placedTasksOnly ? "t:" : "a:") +
+          placedFiltered
+            .map((s) => `${s.id}:${s.done ? 1 : 0}:${s.startMin}:${s.endMin ?? "n"}:${s.type}:${s.title}`)
+            .join("|");
+        if (el.placedList.dataset.renderKey !== placedKey) {
+          el.placedList.dataset.renderKey = placedKey;
+          animateListReorder(el.placedList, () => {
+            el.placedList.innerHTML = "";
+            if (!placedFiltered.length) {
+              el.placedList.innerHTML = `<div class="empty-hint">${
+                prefs.placedTasksOnly
+                  ? "타임라인에 배치된 할 일이 없습니다."
+                  : "타임라인에 배치된 일정이 없습니다."
+              }</div>`;
+              return;
+            }
+            for (const item of placedFiltered) {
+              const card = document.createElement("div");
+              card.className = `dock-card is-placed ${item.done ? "is-done" : ""}`;
+              card.dataset.id = item.id;
+              card.dataset.type = item.type;
+
+              const timeLabel =
+                item.hasEndAt && item.endMin !== null
+                  ? `${minToTimeStr(item.startMin)}~${minToTimeStr(item.endMin)}`
+                  : minToTimeStr(item.startMin);
+
+              card.innerHTML = `
+                <div class="dock-card-top">
+                  <input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />
+                  <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
+                </div>
+                <div class="dock-card-meta">
+                  <span><span class="placed-time-badge">${escapeHtml(timeLabel)}</span> · ${TYPE_META[item.type]?.label || "일정"}</span>
+                  <div class="dock-card-actions">
+                    <button type="button" class="mini-btn jump-btn" title="타임라인에서 보기">📍</button>
+                    <button type="button" class="mini-btn unplace-btn" title="미배치 목록으로 옮기기">↩️</button>
+                    <button type="button" class="mini-btn edit-btn" title="편집">✏️</button>
+                  </div>
+                </div>
+              `;
+
+              card.querySelector(".event-check").addEventListener("change", (e) => {
+                toggleScheduleDone(item.id, e.target.checked);
+              });
+
+              card.querySelector(".dock-card-title").addEventListener("click", () => {
+                openEventModal(item.id);
+              });
+
+              card.querySelector(".jump-btn").addEventListener("click", () => {
+                if (el.appShell && window.matchMedia("(max-width: 1024px)").matches) {
+                  el.appShell.setAttribute("data-mobile-tab", "timeline");
+                }
+                jumpToSchedule(item);
+              });
+
+              card.querySelector(".unplace-btn").addEventListener("click", async () => {
+                await commitScheduleTimeChange(item, null, null);
+                showToast("미배치 목록으로 옮겼습니다.", "📥");
+              });
+
+              card.querySelector(".edit-btn").addEventListener("click", () => {
+                openEventModal(item.id);
+              });
+
+              el.placedList.appendChild(card);
+            }
+          });
+        }
+      }
     }
 
     const remindersKey = reminders
@@ -3334,6 +3426,22 @@
       PlannerAPI.savePrefs(prefs);
       applyPrefsToUI();
       showToast(prefs.dimCompleted ? "완료 일정을 흐리게 표시합니다." : "완료 일정을 선명하게 표시합니다.");
+    });
+
+    el.showPlacedListCheck?.addEventListener("change", (e) => {
+      prefs.showPlacedList = e.target.checked;
+      PlannerAPI.savePrefs(prefs);
+      applyPrefsToUI();
+      renderAll();
+      showToast(prefs.showPlacedList ? "좌측 배치 목록을 표시합니다." : "좌측 배치 목록을 숨겼습니다.");
+    });
+
+    el.placedTasksOnlyBtn?.addEventListener("click", () => {
+      prefs.placedTasksOnly = !prefs.placedTasksOnly;
+      PlannerAPI.savePrefs(prefs);
+      applyPrefsToUI();
+      renderAll();
+      showToast(prefs.placedTasksOnly ? "배치 목록: 할 일만 표시" : "배치 목록: 전체 표시");
     });
 
     el.browserNotifyCheck?.addEventListener("change", async (e) => {
