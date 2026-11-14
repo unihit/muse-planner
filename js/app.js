@@ -36,6 +36,7 @@
   let realtimeDebounceTimer = null;
   let deferredBroadcastSyncTimer = null;
   let lastIntervalPollAt = 0;
+  let supabaseSession = null;
 
   const el = {
     datePicker: document.getElementById("datePicker"),
@@ -139,6 +140,14 @@
 
     apiModal: document.getElementById("apiModal"),
     apiSettingsForm: document.getElementById("apiSettingsForm"),
+    supabaseFields: document.getElementById("supabaseFields"),
+    sbSignedInBox: document.getElementById("sbSignedInBox"),
+    sbUserEmail: document.getElementById("sbUserEmail"),
+    sbLogoutBtn: document.getElementById("sbLogoutBtn"),
+    sbLoginFormBox: document.getElementById("sbLoginFormBox"),
+    sbLoginEmail: document.getElementById("sbLoginEmail"),
+    sbLoginPassword: document.getElementById("sbLoginPassword"),
+    sbLoginBtn: document.getElementById("sbLoginBtn"),
     agentFields: document.getElementById("agentFields"),
     agentApiUrl: document.getElementById("agentApiUrl"),
     agentApiToken: document.getElementById("agentApiToken"),
@@ -365,7 +374,10 @@
     widgetsState = PlannerAPI.loadWidgetsState(dateStr);
 
     const settings = PlannerAPI.getSettings();
-    const cached = settings.mode === "agent" ? PlannerAPI.getCachedSchedules(dateStr) : null;
+    const cached =
+      settings.mode === "agent" || settings.mode === "supabase"
+        ? PlannerAPI.getCachedSchedules(dateStr)
+        : null;
     if (cached) {
       schedules = cached;
       renderAll();
@@ -406,6 +418,7 @@
     if (Date.now() - lastUserMutationAt < 2500) return true;
     if (document.querySelector(".modal-backdrop:not(.hidden)")) return true;
     const s = PlannerAPI.getSettings();
+    if (s.mode === "supabase" && !supabaseSession) return true;
     if (s.mode === "agent" && (!s.agentApiUrl || !s.agentApiToken)) return true;
     return false;
   }
@@ -480,6 +493,77 @@
 
   async function setupRealtimeSync(forceReconnect = false) {
     const s = PlannerAPI.getSettings();
+    if (s.mode === "supabase") {
+      if (!supabaseSession) {
+        try {
+          supabaseSession = await PlannerAPI.getSupabaseSession();
+        } catch {
+          supabaseSession = null;
+        }
+      }
+      if (!supabaseSession) {
+        await disconnectRealtime();
+        return;
+      }
+
+      const nextKey = `supabase|${supabaseSession.user?.id || ""}`;
+      if (!forceReconnect && (realtimeConnecting || (realtimeChannel && realtimeConfigKey === nextKey))) {
+        return;
+      }
+
+      realtimeConnecting = true;
+      try {
+        const sb = await PlannerAPI.getSupabaseClient();
+        await disconnectRealtime();
+
+        realtimeConfigKey = nextKey;
+        realtimeClient = sb;
+        realtimeChannel = sb
+          .channel("muse-schedules-db")
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "schedules" },
+            (payload) => {
+              const nextRow = payload?.new || {};
+              const oldRow = payload?.old || {};
+              const changedDate = nextRow.date || null;
+              const oldDate = oldRow.date || null;
+
+              if (changedDate && changedDate !== currentDate) {
+                PlannerAPI.clearCachedSchedules(changedDate);
+              }
+              if (oldDate && oldDate !== currentDate) {
+                PlannerAPI.clearCachedSchedules(oldDate);
+              }
+
+              const affectsCurrent =
+                (!changedDate && !oldDate) ||
+                changedDate === currentDate ||
+                oldDate === currentDate;
+              if (!affectsCurrent) return;
+
+              clearTimeout(realtimeDebounceTimer);
+              realtimeDebounceTimer = setTimeout(() => {
+                syncIfChanged(true, { force: true, fromBroadcast: true });
+              }, 180);
+            }
+          )
+          .subscribe((status) => {
+            const isSub = status === "SUBSCRIBED";
+            if (realtimeConnected !== isSub) {
+              realtimeConnected = isSub;
+              updateApiBadge();
+            }
+          });
+      } catch {
+        realtimeConnected = false;
+        updateApiBadge();
+      } finally {
+        realtimeConnecting = false;
+      }
+      return;
+    }
+
     if (s.mode !== "agent" || !s.agentApiUrl || !s.agentApiToken) {
       await disconnectRealtime();
       return;
@@ -561,7 +645,8 @@
   }
 
   function syncSwrCacheIfCurrent(dateStr, list) {
-    if (PlannerAPI.getSettings().mode === "agent") {
+    const mode = PlannerAPI.getSettings().mode;
+    if (mode === "agent" || mode === "supabase") {
       PlannerAPI.setCachedSchedules(dateStr, list);
     }
   }
@@ -829,7 +914,15 @@
 
   function updateApiBadge() {
     const s = PlannerAPI.getSettings();
-    if (s.mode === "agent") {
+    if (s.mode === "supabase") {
+      if (supabaseSession) {
+        el.apiSourceDot.className = realtimeConnected ? "source-dot agent realtime" : "source-dot agent";
+        el.apiSourceLabel.textContent = realtimeConnected ? "실시간 연결" : "계정 연결됨";
+      } else {
+        el.apiSourceDot.className = "source-dot agent-warn";
+        el.apiSourceLabel.textContent = "로그인 필요";
+      }
+    } else if (s.mode === "agent") {
       if (s.agentApiUrl && s.agentApiToken) {
         el.apiSourceDot.className = realtimeConnected ? "source-dot agent realtime" : "source-dot agent";
         el.apiSourceLabel.textContent = realtimeConnected ? "실시간 연결" : "Agent API";
@@ -2047,6 +2140,15 @@
 
   /* -------------------- 모달: API 설정 -------------------- */
 
+  function updateSupabaseAuthUi() {
+    const signedIn = Boolean(supabaseSession?.user);
+    el.sbSignedInBox.classList.toggle("hidden", !signedIn);
+    el.sbLoginFormBox.classList.toggle("hidden", signedIn);
+    if (signedIn) {
+      el.sbUserEmail.textContent = supabaseSession.user.email || supabaseSession.user.id || "로그인됨";
+    }
+  }
+
   function openApiSettingsModal() {
     const s = PlannerAPI.getSettings();
     const radio = el.apiSettingsForm.querySelector(`input[name="apiMode"][value="${s.mode}"]`);
@@ -2054,12 +2156,14 @@
 
     el.agentApiUrl.value = s.agentApiUrl || "";
     el.agentApiToken.value = s.agentApiToken || "";
+    updateSupabaseAuthUi();
     toggleProviderFields(s.mode);
     updateMuseSnippet();
     el.apiModal.classList.remove("hidden");
   }
 
   function toggleProviderFields(mode) {
+    el.supabaseFields.classList.toggle("hidden", mode !== "supabase");
     el.agentFields.classList.toggle("hidden", mode !== "agent");
   }
 
@@ -2425,19 +2529,65 @@
       }
     });
 
-    el.apiSettingsForm.addEventListener("submit", (e) => {
+    async function performSupabaseLogin() {
+      const email = el.sbLoginEmail.value.trim();
+      const password = el.sbLoginPassword.value;
+      if (!email || !password) {
+        showToast("이메일과 비밀번호를 모두 입력해 주세요.", "⚠️");
+        return;
+      }
+      el.sbLoginBtn.disabled = true;
+      el.sbLoginBtn.textContent = "로그인 중...";
+      try {
+        supabaseSession = await PlannerAPI.signInSupabase(email, password);
+        el.sbLoginPassword.value = "";
+        updateSupabaseAuthUi();
+        updateApiBadge();
+        el.apiModal.classList.add("hidden");
+        await loadDay(currentDate);
+        await setupRealtimeSync(true);
+        showToast("가계부 계정으로 로그인되었습니다.", "✅");
+      } catch (err) {
+        showToast(`로그인 실패: ${err.message}`, "⚠️");
+      } finally {
+        el.sbLoginBtn.disabled = false;
+        el.sbLoginBtn.textContent = "로그인 및 동기화";
+      }
+    }
+
+    el.sbLoginBtn.addEventListener("click", performSupabaseLogin);
+
+    el.sbLogoutBtn.addEventListener("click", async () => {
+      try {
+        await PlannerAPI.signOutSupabase();
+      } catch {
+        // ignore signOut errors
+      }
+      supabaseSession = null;
+      await disconnectRealtime();
+      updateSupabaseAuthUi();
+      updateApiBadge();
+      schedules = [];
+      renderAll();
+      showToast("로그아웃했습니다.");
+    });
+
+    el.apiSettingsForm.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const mode = el.apiSettingsForm.querySelector('input[name="apiMode"]:checked')?.value || "local";
+      const mode = el.apiSettingsForm.querySelector('input[name="apiMode"]:checked')?.value || "supabase";
+      if (mode === "supabase" && !supabaseSession) {
+        await performSupabaseLogin();
+        return;
+      }
       PlannerAPI.saveSettings({
         mode,
         agentApiUrl: el.agentApiUrl.value.trim(),
         agentApiToken: el.agentApiToken.value.trim()
       });
       el.apiModal.classList.add("hidden");
-      loadDay(currentDate).then(() => {
-        setupRealtimeSync(true);
-        showToast("설정을 저장하고 일정을 불러왔습니다.");
-      });
+      await loadDay(currentDate);
+      await setupRealtimeSync(true);
+      showToast("설정을 저장하고 일정을 불러왔습니다.");
     });
 
     // 모달 닫기
@@ -2481,12 +2631,38 @@
   /* -------------------- 부트스트랩 -------------------- */
 
   bindControls();
-  loadDay(currentDate).then(() => {
+
+  (async function bootstrap() {
+    try {
+      const s = PlannerAPI.getSettings();
+      if (s.mode === "supabase") {
+        supabaseSession = await PlannerAPI.getSupabaseSession();
+      }
+      const sb = await PlannerAPI.getSupabaseClient().catch(() => null);
+      if (sb) {
+        sb.auth.onAuthStateChange((_event, session) => {
+          supabaseSession = session || null;
+          updateApiBadge();
+          updateSupabaseAuthUi();
+          if (PlannerAPI.getSettings().mode === "supabase") {
+            if (supabaseSession) {
+              setupRealtimeSync(true);
+            } else {
+              disconnectRealtime();
+            }
+          }
+        });
+      }
+    } catch {
+      supabaseSession = null;
+    }
+
+    await loadDay(currentDate);
     if (hashConnectResult.applied) {
       showToast("원클릭 링크로 Muse API에 자동 연결되었습니다.", "🔗");
     }
-  });
-  setupRealtimeSync();
+    setupRealtimeSync();
+  })();
 
   window.addEventListener("hashchange", () => {
     const res = PlannerAPI.applyHashConnection();

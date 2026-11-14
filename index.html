@@ -139,9 +139,9 @@
           </svg>
         </button>
 
-        <button id="openApiModalBtn" class="api-pill" title="Agent API 주소 및 Bearer 토큰 설정">
+        <button id="openApiModalBtn" class="api-pill" title="계정 로그인 및 동기화 설정">
           <span id="apiSourceDot" class="source-dot local"></span>
-          <span id="apiSourceLabel">로컬 모드</span>
+          <span id="apiSourceLabel">연결 확인 중</span>
         </button>
       </div>
     </header>
@@ -419,25 +419,58 @@
   <div id="apiModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
     <div class="modal-card modal-lg">
       <div class="modal-header">
-        <h3>⚙️ Agent API 연동 & 테스트 설정</h3>
+        <h3>🔐 계정 로그인 & 동기화 설정</h3>
         <button class="modal-close" data-close="apiModal">✕</button>
       </div>
       <form id="apiSettingsForm" class="modal-body">
         <div class="mode-selector">
           <label class="mode-card">
-            <input type="radio" name="apiMode" value="agent" />
+            <input type="radio" name="apiMode" value="supabase" checked />
             <div>
-              <strong>⚡ 가계부 통합 Agent API (추천)</strong>
-              <p><code>/v1/schedules</code> 엔드포인트로 Supabase Postgres에 실시간 저장·조회</p>
+              <strong>🔐 가계부 계정 로그인 (추천)</strong>
+              <p><code>ssen-ledger</code>와 동일한 이메일·비밀번호로 로그인해 키 입력 없이 실시간 동기화</p>
             </div>
           </label>
           <label class="mode-card">
-            <input type="radio" name="apiMode" value="local" checked />
+            <input type="radio" name="apiMode" value="agent" />
             <div>
-              <strong>💾 로컬 스토리지 모드</strong>
-              <p>API 연결 전 UI 테스트용 (브라우저 localStorage에 저장)</p>
+              <strong>⚡ Agent API 토큰 연동</strong>
+              <p>API 주소와 Bearer 토큰으로 연결 (원클릭 링크 지원)</p>
             </div>
           </label>
+          <label class="mode-card">
+            <input type="radio" name="apiMode" value="local" />
+            <div>
+              <strong>💾 로컬 스토리지 모드</strong>
+              <p>로그인 없이 브라우저에만 임시 저장</p>
+            </div>
+          </label>
+        </div>
+
+        <div id="supabaseFields" class="provider-fields">
+          <div id="sbSignedInBox" class="sb-signed-in-box hidden">
+            <div class="sb-user-meta">
+              <strong>✅ 로그인됨</strong>
+              <span id="sbUserEmail">-</span>
+            </div>
+            <button type="button" id="sbLogoutBtn" class="btn-secondary">로그아웃</button>
+          </div>
+          <div id="sbLoginFormBox" class="sb-login-box">
+            <label class="field">
+              <span>이메일 (ssen-ledger 계정)</span>
+              <input id="sbLoginEmail" type="email" placeholder="example@gmail.com" autocomplete="username" />
+            </label>
+            <label class="field">
+              <span>비밀번호</span>
+              <input id="sbLoginPassword" type="password" placeholder="비밀번호 입력..." autocomplete="current-password" />
+            </label>
+            <div class="sb-login-actions">
+              <p class="api-note">
+                🔑 URL·API 키는 내장되어 있어 입력할 필요가 없으며, 로그인 시 DB 변경사항이 실시간 반영됩니다.
+              </p>
+              <button type="button" id="sbLoginBtn" class="btn-primary">로그인 및 동기화</button>
+            </div>
+          </div>
         </div>
 
         <div id="agentFields" class="provider-fields hidden">

@@ -15,9 +15,14 @@
   const PREFS_KEY = "muse_planner_ui_prefs_v2";
 
   const KST_TIMEZONE = "Asia/Seoul";
+  const SUPABASE_DEFAULT_URL = "https://vetwwxmujaiwwwpjurpr.supabase.co";
+  const SUPABASE_DEFAULT_ANON_KEY =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZldHd3eG11amFpd3d3cGp1cnByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMwOTQxNDEsImV4cCI6MjEwODY3MDE0MX0.XYxgyeN-vWZ5MDtJGG4hJaIdNH29L1eFQNnCivoXr6M";
+  const SCHEDULE_COLUMNS =
+    "id, date, start_at, end_at, title, type, done, done_at, source, memo, created_at, updated_at";
 
   const DEFAULT_SETTINGS = {
-    mode: "local", // 'agent' | 'local'
+    mode: "supabase", // 'supabase' | 'agent' | 'local'
     agentApiUrl: "",
     agentApiToken: ""
   };
@@ -162,17 +167,18 @@
     if (!stored.mode && localOverride.agentApiUrl && localOverride.agentApiToken) {
       merged.mode = "agent";
     }
-    merged.mode = merged.mode === "agent" ? "agent" : "local";
+    merged.mode = ["supabase", "agent", "local"].includes(merged.mode) ? merged.mode : "supabase";
     merged.agentApiUrl = String(merged.agentApiUrl || "").trim().replace(/\/+$/, "");
     merged.agentApiToken = String(merged.agentApiToken || "").trim();
     return merged;
   }
 
   function saveSettings(next) {
+    const mode = ["supabase", "agent", "local"].includes(next.mode) ? next.mode : "supabase";
     const merged = {
       ...DEFAULT_SETTINGS,
       ...next,
-      mode: next.mode === "agent" ? "agent" : "local",
+      mode,
       agentApiUrl: String(next.agentApiUrl || "").trim().replace(/\/+$/, ""),
       agentApiToken: String(next.agentApiToken || "").trim()
     };
@@ -540,8 +546,94 @@
     return requestAgentApi(settings, "/v1/realtime-config");
   }
 
+  /* -------------------- Supabase Auth & DB 어댑터 -------------------- */
+
+  let supabaseClientPromise = null;
+
+  async function getSupabaseClient() {
+    if (!supabaseClientPromise) {
+      supabaseClientPromise = import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm").then(
+        ({ createClient }) =>
+          createClient(SUPABASE_DEFAULT_URL, SUPABASE_DEFAULT_ANON_KEY, {
+            auth: {
+              persistSession: true,
+              autoRefreshToken: true,
+              detectSessionInUrl: false
+            }
+          })
+      );
+    }
+    return supabaseClientPromise;
+  }
+
+  async function getSupabaseSession() {
+    const sb = await getSupabaseClient();
+    const { data, error } = await sb.auth.getSession();
+    if (error) throw new Error(error.message);
+    return data?.session ?? null;
+  }
+
+  async function signInSupabase(email, password) {
+    const sb = await getSupabaseClient();
+    const { data, error } = await sb.auth.signInWithPassword({
+      email: String(email || "").trim(),
+      password: String(password || "")
+    });
+    if (error) throw new Error(error.message || "로그인에 실패했습니다.");
+    const cur = getSettings();
+    saveSettings({ ...cur, mode: "supabase" });
+    return data?.session ?? null;
+  }
+
+  async function signOutSupabase() {
+    const sb = await getSupabaseClient();
+    const { error } = await sb.auth.signOut();
+    if (error) throw new Error(error.message);
+  }
+
+  async function requireSupabaseSession() {
+    const session = await getSupabaseSession();
+    if (!session) {
+      throw new Error("로그인이 필요합니다. 상단 '로그인 필요' 버튼을 눌러 가계부 계정으로 로그인하세요.");
+    }
+    return session;
+  }
+
+  function updateCachedAfterPatch(normalized, dateHint) {
+    const cacheDates = new Set([dateHint, normalized.date].filter(Boolean));
+    for (const d of cacheDates) {
+      const cached = getCachedSchedules(d);
+      if (!cached) continue;
+      if (d === normalized.date) {
+        const exists = cached.some((item) => item.id === normalized.id);
+        const next = exists
+          ? cached.map((item) => (item.id === normalized.id ? normalized : item))
+          : [...cached, normalized];
+        setCachedSchedules(d, next);
+      } else {
+        setCachedSchedules(d, cached.filter((item) => item.id !== normalized.id));
+      }
+    }
+  }
+
   async function fetchSchedules(dateStr) {
     const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb
+        .from("schedules")
+        .select(SCHEDULE_COLUMNS)
+        .eq("date", dateStr)
+        .order("start_at", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true });
+      if (error) throw new Error(error.message);
+      const normalized = sortSchedules(
+        (Array.isArray(data) ? data : []).map((r) => normalizeScheduleRecord(r, dateStr))
+      );
+      setCachedSchedules(dateStr, normalized);
+      return normalized;
+    }
     if (settings.mode === "agent") {
       const rows = await requestAgentApi(settings, `/v1/schedules?date=${encodeURIComponent(dateStr)}`);
       const normalized = sortSchedules(
@@ -555,6 +647,20 @@
 
   async function fetchSchedulesRange(fromStr, toStr) {
     const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb
+        .from("schedules")
+        .select(SCHEDULE_COLUMNS)
+        .gte("date", fromStr)
+        .lte("date", toStr)
+        .order("date", { ascending: true })
+        .order("start_at", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true });
+      if (error) throw new Error(error.message);
+      return sortSchedules((Array.isArray(data) ? data : []).map((r) => normalizeScheduleRecord(r, r.date)));
+    }
     if (settings.mode === "agent") {
       const rows = await requestAgentApi(
         settings,
@@ -575,6 +681,33 @@
 
   async function createSchedule(payload) {
     const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const insertRow = {
+        date: payload.date || todayKst(),
+        start_at: payload.start_at ?? null,
+        end_at: payload.end_at ?? null,
+        title: String(payload.title || "").trim(),
+        type: payload.type || "schedule",
+        done: Boolean(payload.done),
+        done_at: payload.done ? new Date().toISOString() : null,
+        source: payload.source || "app",
+        memo: payload.memo ?? null
+      };
+      const { data, error } = await sb
+        .from("schedules")
+        .insert(insertRow)
+        .select(SCHEDULE_COLUMNS)
+        .single();
+      if (error) throw new Error(error.message);
+      const normalized = normalizeScheduleRecord(data, insertRow.date);
+      const cached = getCachedSchedules(normalized.date);
+      if (cached) {
+        setCachedSchedules(normalized.date, [...cached.filter((x) => x.id !== normalized.id), normalized]);
+      }
+      return normalized;
+    }
     if (settings.mode === "agent") {
       const created = await requestAgentApi(settings, "/v1/schedules", {
         method: "POST",
@@ -608,26 +741,31 @@
 
   async function patchSchedule(id, patch, dateHint) {
     const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const updates = { ...patch };
+      if ("done" in updates) {
+        updates.done_at = updates.done ? new Date().toISOString() : null;
+      }
+      const { data, error } = await sb
+        .from("schedules")
+        .update(updates)
+        .eq("id", id)
+        .select(SCHEDULE_COLUMNS)
+        .single();
+      if (error) throw new Error(error.message);
+      const normalized = normalizeScheduleRecord(data, dateHint);
+      updateCachedAfterPatch(normalized, dateHint);
+      return normalized;
+    }
     if (settings.mode === "agent") {
       const updated = await requestAgentApi(settings, `/v1/schedules/${encodeURIComponent(id)}`, {
         method: "PATCH",
         body: patch
       });
       const normalized = normalizeScheduleRecord(updated, dateHint);
-      const cacheDates = new Set([dateHint, normalized.date].filter(Boolean));
-      for (const d of cacheDates) {
-        const cached = getCachedSchedules(d);
-        if (!cached) continue;
-        if (d === normalized.date) {
-          const exists = cached.some((item) => item.id === normalized.id);
-          const next = exists
-            ? cached.map((item) => (item.id === normalized.id ? normalized : item))
-            : [...cached, normalized];
-          setCachedSchedules(d, next);
-        } else {
-          setCachedSchedules(d, cached.filter((item) => item.id !== normalized.id));
-        }
-      }
+      updateCachedAfterPatch(normalized, dateHint);
       return normalized;
     }
 
@@ -665,6 +803,19 @@
 
   async function deleteSchedule(id, dateHint) {
     const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { error } = await sb.from("schedules").delete().eq("id", id);
+      if (error) throw new Error(error.message);
+      if (dateHint) {
+        const cached = getCachedSchedules(dateHint);
+        if (cached) {
+          setCachedSchedules(dateHint, cached.filter((item) => item.id !== id));
+        }
+      }
+      return;
+    }
     if (settings.mode === "agent") {
       await requestAgentApi(settings, `/v1/schedules/${encodeURIComponent(id)}`, {
         method: "DELETE"
@@ -724,6 +875,10 @@
     saveSettings,
     applyHashConnection,
     buildConnectUrl,
+    getSupabaseClient,
+    getSupabaseSession,
+    signInSupabase,
+    signOutSupabase,
     getPrefs,
     savePrefs,
     resetLocalSeed,

@@ -50,4 +50,25 @@ alter table public.schedules enable row level security;
 revoke all on table public.schedules from anon;
 grant select, insert, update, delete on table public.schedules to authenticated, service_role;
 
+drop policy if exists "Authenticated users can manage schedules" on public.schedules;
+create policy "Authenticated users can manage schedules"
+  on public.schedules
+  for all
+  to authenticated
+  using (auth.uid() is not null)
+  with check (auth.uid() is not null);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'schedules'
+  ) then
+    alter publication supabase_realtime add table public.schedules;
+  end if;
+end $$;
+
 notify pgrst, 'reload schema';
