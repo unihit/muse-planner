@@ -449,6 +449,13 @@
             <span>Authorization Bearer 토큰 (기존 가계부와 동일)</span>
             <input id="agentApiToken" type="password" placeholder="AGENT_API_KEY 입력..." autocomplete="off" />
           </label>
+          <div class="connect-link-box">
+            <div class="connect-link-info">
+              <strong>🔗 원클릭 연결 링크 (북마크·다른 기기 연동용)</strong>
+              <p>URL 해시(<code>#</code>)로 전달되어 서버 로그에 남지 않으며, 열자마자 저장 후 주소창에서 자동 삭제됩니다.</p>
+            </div>
+            <button type="button" id="copyConnectLinkBtn" class="btn-secondary">🔗 링크 복사</button>
+          </div>
           <p class="api-note">
             🔒 보안 분리: 입력한 API 주소와 토큰은 <strong>이 브라우저의 localStorage</strong>에만 저장되며, GitHub 저장소 코드에는 일절 포함되지 않습니다.
           </p>

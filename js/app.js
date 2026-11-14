@@ -7,6 +7,8 @@
     reminder: { label: "알림", badge: "🔔 알림", color: "#f59e0b" }
   };
 
+  const hashConnectResult = PlannerAPI.applyHashConnection();
+
   let currentDate = PlannerAPI.todayKst();
   let prefs = PlannerAPI.getPrefs();
   let schedules = [];
@@ -23,6 +25,14 @@
   let lastUserMutationAt = 0;
   let loadRequestToken = 0;
   let undoStack = [];
+  let realtimeClient = null;
+  let realtimeChannel = null;
+  let realtimeConnected = false;
+  let realtimeConfigKey = "";
+  let realtimeConnecting = false;
+  let realtimeDebounceTimer = null;
+  let deferredBroadcastSyncTimer = null;
+  let lastIntervalPollAt = 0;
 
   const el = {
     datePicker: document.getElementById("datePicker"),
@@ -129,6 +139,7 @@
     agentFields: document.getElementById("agentFields"),
     agentApiUrl: document.getElementById("agentApiUrl"),
     agentApiToken: document.getElementById("agentApiToken"),
+    copyConnectLinkBtn: document.getElementById("copyConnectLinkBtn"),
     musePayloadPreview: document.getElementById("musePayloadPreview"),
     copyMusePromptBtn: document.getElementById("copyMusePromptBtn"),
     seedTestDataBtn: document.getElementById("seedTestDataBtn"),
@@ -395,9 +406,22 @@
     return false;
   }
 
-  async function syncIfChanged(showNotify = true) {
+  async function syncIfChanged(showNotify = true, options = {}) {
     const now = Date.now();
-    if (now - lastSyncCheckAt < 2000) return;
+    const force = Boolean(options.force);
+    if (!force && now - lastSyncCheckAt < 2000) return;
+
+    if (options.fromBroadcast) {
+      const mutationElapsed = now - lastUserMutationAt;
+      if (mutationElapsed < 2500) {
+        clearTimeout(deferredBroadcastSyncTimer);
+        deferredBroadcastSyncTimer = setTimeout(() => {
+          syncIfChanged(showNotify, { force: true });
+        }, 2600 - mutationElapsed);
+        return;
+      }
+    }
+
     if (isAutoSyncPaused()) return;
 
     lastSyncCheckAt = now;
@@ -412,13 +436,103 @@
         schedules = fresh;
         renderAll();
         if (showNotify) {
-          showToast("일정 변경사항이 자동 반영되었습니다.", "🔄");
+          showToast("일정 변경사항이 실시간 반영되었습니다.", "⚡");
         }
       }
     } catch {
       // 백그라운드 동기화 실패 시 조용히 다음 주기에 재시도
     } finally {
       isBackgroundSyncing = false;
+    }
+  }
+
+  async function disconnectRealtime() {
+    clearTimeout(realtimeDebounceTimer);
+    clearTimeout(deferredBroadcastSyncTimer);
+    const ch = realtimeChannel;
+    const client = realtimeClient;
+    realtimeChannel = null;
+    realtimeClient = null;
+    realtimeConfigKey = "";
+    if (realtimeConnected) {
+      realtimeConnected = false;
+      updateApiBadge();
+    }
+    if (client && ch) {
+      try {
+        await client.removeChannel(ch);
+      } catch {
+        // ignore cleanup error
+      }
+    }
+  }
+
+  async function setupRealtimeSync(forceReconnect = false) {
+    const s = PlannerAPI.getSettings();
+    if (s.mode !== "agent" || !s.agentApiUrl || !s.agentApiToken) {
+      await disconnectRealtime();
+      return;
+    }
+
+    const nextKey = `${s.agentApiUrl}|${s.agentApiToken}`;
+    if (!forceReconnect && (realtimeConnecting || (realtimeChannel && realtimeConfigKey === nextKey))) {
+      return;
+    }
+
+    realtimeConnecting = true;
+    try {
+      const cfg = await PlannerAPI.fetchRealtimeConfig();
+      const latest = PlannerAPI.getSettings();
+      if (`${latest.agentApiUrl}|${latest.agentApiToken}` !== nextKey || latest.mode !== "agent") {
+        return;
+      }
+      if (!cfg?.enabled || !cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+        await disconnectRealtime();
+        return;
+      }
+
+      const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+      await disconnectRealtime();
+
+      realtimeConfigKey = nextKey;
+      realtimeClient = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false }
+      });
+
+      const channelName = cfg.channel || "muse-schedules";
+      const eventName = cfg.event || "schedules_changed";
+
+      realtimeChannel = realtimeClient
+        .channel(channelName)
+        .on("broadcast", { event: eventName }, (msg) => {
+          const payload = msg?.payload ?? msg ?? {};
+          if (payload.date && payload.date !== currentDate) {
+            PlannerAPI.clearCachedSchedules(payload.date);
+          }
+          if (payload.prevDate && payload.prevDate !== currentDate) {
+            PlannerAPI.clearCachedSchedules(payload.prevDate);
+          }
+          const affectsCurrent =
+            !payload.date || payload.date === currentDate || payload.prevDate === currentDate;
+          if (!affectsCurrent) return;
+
+          clearTimeout(realtimeDebounceTimer);
+          realtimeDebounceTimer = setTimeout(() => {
+            syncIfChanged(true, { force: true, fromBroadcast: true });
+          }, 180);
+        })
+        .subscribe((status) => {
+          const isSub = status === "SUBSCRIBED";
+          if (realtimeConnected !== isSub) {
+            realtimeConnected = isSub;
+            updateApiBadge();
+          }
+        });
+    } catch {
+      realtimeConnected = false;
+      updateApiBadge();
+    } finally {
+      realtimeConnecting = false;
     }
   }
 
@@ -706,8 +820,8 @@
     const s = PlannerAPI.getSettings();
     if (s.mode === "agent") {
       if (s.agentApiUrl && s.agentApiToken) {
-        el.apiSourceDot.className = "source-dot agent";
-        el.apiSourceLabel.textContent = "Agent API";
+        el.apiSourceDot.className = realtimeConnected ? "source-dot agent realtime" : "source-dot agent";
+        el.apiSourceLabel.textContent = realtimeConnected ? "실시간 연결" : "Agent API";
       } else {
         el.apiSourceDot.className = "source-dot agent-warn";
         el.apiSourceLabel.textContent = "API 설정 필요";
@@ -1037,17 +1151,62 @@
 
   /* -------------------- 60fps 포인터 드래그 & 상하 리사이즈 -------------------- */
 
+  function selectEventBlock(eventId) {
+    selectedEventId = eventId;
+    if (!el.eventsLayer) return;
+    el.eventsLayer.querySelectorAll(".event-block").forEach((node) => {
+      node.classList.toggle("is-selected", Boolean(eventId) && node.dataset.id === eventId);
+    });
+  }
+
   function bindEventPointerInteractions(block, ev) {
     const topHandle = block.querySelector(".resize-handle.top");
     const bottomHandle = block.querySelector(".resize-handle.bottom");
 
     const startPointerOp = (mode, downEvent) => {
-      if (downEvent.button !== 0) return;
+      if (downEvent.button !== 0 && downEvent.pointerType !== "touch") return;
       if (downEvent.target.closest("input, button")) return;
-      downEvent.stopPropagation();
-      activePointerDrag = true;
 
-      selectedEventId = ev.id;
+      const isTouch = downEvent.pointerType === "touch";
+      const isAlreadySelected = selectedEventId === ev.id;
+
+      // 터치 환경: 선택되지 않은 일정은 이동/리사이즈 불가 (단일 탭으로만 선택/핸들 활성화)
+      if (isTouch && !isAlreadySelected) {
+        if (mode !== "move") return;
+
+        const tapStartX = downEvent.clientX;
+        const tapStartY = downEvent.clientY;
+        let movedByScroll = false;
+
+        const cleanupTap = () => {
+          window.removeEventListener("pointermove", onTapMove);
+          window.removeEventListener("pointerup", onTapUp);
+          window.removeEventListener("pointercancel", cleanupTap);
+        };
+
+        const onTapMove = (mv) => {
+          if (Math.abs(mv.clientY - tapStartY) > 8 || Math.abs(mv.clientX - tapStartX) > 8) {
+            movedByScroll = true;
+            cleanupTap();
+          }
+        };
+
+        const onTapUp = () => {
+          cleanupTap();
+          if (!movedByScroll) {
+            selectEventBlock(ev.id);
+          }
+        };
+
+        window.addEventListener("pointermove", onTapMove);
+        window.addEventListener("pointerup", onTapUp);
+        window.addEventListener("pointercancel", cleanupTap);
+        return;
+      }
+
+      downEvent.stopPropagation();
+
+      const startClientX = downEvent.clientX;
       const startClientY = downEvent.clientY;
       const origStart = ev.startMin;
       const origHasEnd = ev.hasEndAt && ev.endMin !== null;
@@ -1060,11 +1219,21 @@
       let previewHasEnd = origHasEnd;
       let droppingToDock = false;
 
+      activePointerDrag = true;
+      selectedEventId = ev.id;
+
       const timeSpan = block.querySelector(".event-time-text");
+
+      const cleanupListeners = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+      };
 
       const onMove = (moveEvent) => {
         const dy = moveEvent.clientY - startClientY;
-        const dx = Math.abs(moveEvent.clientX - downEvent.clientX);
+        const dx = Math.abs(moveEvent.clientX - startClientX);
+
         if (!hasMoved && Math.abs(dy) < 4 && dx < 4) return;
         hasMoved = true;
         block.classList.add("is-dragging");
@@ -1105,15 +1274,26 @@
         }
       };
 
+      const onCancel = () => {
+        activePointerDrag = false;
+        cleanupListeners();
+        block.classList.remove("is-dragging");
+        el.stagingDock.classList.remove("drop-active");
+        if (hasMoved) renderEvents();
+      };
+
       const onUp = async () => {
         activePointerDrag = false;
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
+        cleanupListeners();
         block.classList.remove("is-dragging");
         el.stagingDock.classList.remove("drop-active");
 
         if (!hasMoved) {
-          renderEvents();
+          if (isTouch && mode === "move") {
+            openEventModal(ev.id);
+          } else {
+            renderEvents();
+          }
           return;
         }
 
@@ -1146,6 +1326,7 @@
 
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
     };
 
     topHandle.addEventListener("pointerdown", (e) => startPointerOp("resize-top", e));
@@ -1157,6 +1338,8 @@
 
   function bindTimelineCreationAndDrop() {
     el.hourRowsLayer.addEventListener("pointerdown", (e) => {
+      // 터치 환경에서는 빈 타임라인 터치/스크롤 시 모달이 뜨지 않도록 차단 (더블탭 또는 '+ 새 일정' 버튼 사용)
+      if (e.pointerType === "touch") return;
       if (e.button !== 0) return;
       if (e.target.closest(".early-collapsed-banner")) return;
 
@@ -1177,6 +1360,13 @@
         el.ghostPreview.classList.remove("hidden");
       };
 
+      const cleanup = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+        el.ghostPreview.classList.add("hidden");
+      };
+
       const onMove = (mv) => {
         if (Math.abs(mv.clientY - e.clientY) > 6) dragged = true;
         if (!dragged) return;
@@ -1187,10 +1377,12 @@
         updateGhost();
       };
 
+      const onCancel = () => {
+        cleanup();
+      };
+
       const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        el.ghostPreview.classList.add("hidden");
+        cleanup();
 
         if (!dragged) {
           curStartMin = anchorMin;
@@ -1201,6 +1393,23 @@
 
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+    });
+
+    // 모바일/터치용: 빈 타임라인 더블탭 시 해당 시각에 새 일정 생성, 단일 탭 시 선택 해제
+    el.hourRowsLayer.addEventListener("dblclick", (e) => {
+      if (e.target.closest(".early-collapsed-banner")) return;
+      const gridRect = el.timelineGrid.getBoundingClientRect();
+      const y = e.clientY - gridRect.top;
+      const anchorMin = snap(yToMin(y));
+      openNewEventModal(anchorMin, Math.min(1440, anchorMin + 30));
+    });
+
+    el.hourRowsLayer.addEventListener("click", (e) => {
+      if (e.target.closest(".early-collapsed-banner")) return;
+      if (selectedEventId) {
+        selectEventBlock(null);
+      }
     });
 
     el.timelineScroll.addEventListener("dragover", (e) => {
@@ -2022,6 +2231,20 @@
       }
     });
 
+    el.copyConnectLinkBtn.addEventListener("click", async () => {
+      const link = PlannerAPI.buildConnectUrl(el.agentApiUrl.value.trim(), el.agentApiToken.value.trim());
+      if (!link) {
+        showToast("Agent API URL과 Bearer 토큰을 먼저 입력해 주세요.", "⚠️");
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(link);
+        showToast("원클릭 연결 링크를 복사했습니다. 북마크하거나 다른 기기에서 열면 바로 연동됩니다.", "🔗");
+      } catch {
+        showToast("복사에 실패했습니다.");
+      }
+    });
+
     el.apiSettingsForm.addEventListener("submit", (e) => {
       e.preventDefault();
       const mode = el.apiSettingsForm.querySelector('input[name="apiMode"]:checked')?.value || "local";
@@ -2031,7 +2254,10 @@
         agentApiToken: el.agentApiToken.value.trim()
       });
       el.apiModal.classList.add("hidden");
-      loadDay(currentDate).then(() => showToast("설정을 저장하고 일정을 불러왔습니다."));
+      loadDay(currentDate).then(() => {
+        setupRealtimeSync(true);
+        showToast("설정을 저장하고 일정을 불러왔습니다.");
+      });
     });
 
     // 모달 닫기
@@ -2074,13 +2300,31 @@
   /* -------------------- 부트스트랩 -------------------- */
 
   bindControls();
-  loadDay(currentDate);
+  loadDay(currentDate).then(() => {
+    if (hashConnectResult.applied) {
+      showToast("원클릭 링크로 Muse API에 자동 연결되었습니다.", "🔗");
+    }
+  });
+  setupRealtimeSync();
+
+  window.addEventListener("hashchange", () => {
+    const res = PlannerAPI.applyHashConnection();
+    if (res.applied) {
+      loadDay(currentDate).then(() => {
+        setupRealtimeSync(true);
+        showToast("원클릭 링크로 Muse API에 자동 연결되었습니다.", "🔗");
+      });
+    }
+  });
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) syncIfChanged(true);
+    if (!document.hidden) {
+      syncIfChanged(true, { force: true });
+      setupRealtimeSync();
+    }
   });
   window.addEventListener("focus", () => {
-    syncIfChanged(true);
+    syncIfChanged(true, { force: true });
   });
 
   setInterval(() => {
@@ -2089,6 +2333,12 @@
       renderEvents();
     }
     renderNowState();
-    syncIfChanged(true);
-  }, 15000);
+
+    const now = Date.now();
+    const pollInterval = realtimeConnected ? 15000 : 5000;
+    if (now - lastIntervalPollAt >= pollInterval) {
+      lastIntervalPollAt = now;
+      syncIfChanged(true);
+    }
+  }, 5000);
 })();

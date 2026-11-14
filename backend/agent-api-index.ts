@@ -130,6 +130,8 @@ const SCHEDULE_TYPES = ['schedule', 'task', 'reminder'] as const
 const SCHEDULE_SOURCES = ['muse', 'app'] as const
 const SCHEDULE_SELECT =
   'id, date, start_at, end_at, title, type, done, done_at, source, memo, created_at, updated_at'
+const REALTIME_CHANNEL = 'muse-schedules'
+const REALTIME_EVENT = 'schedules_changed'
 const CORS_HEADERS: Record<string, string> = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
@@ -378,6 +380,85 @@ function db(): any {
   }
 
   return client
+}
+
+function publicClientKey(): string {
+  const raw = Deno.env.get('SUPABASE_PUBLISHABLE_KEYS')
+  if (raw) {
+    try {
+      const keys = JSON.parse(raw) as Record<string, unknown>
+      if (typeof keys.default === 'string' && keys.default) {
+        return keys.default
+      }
+    } catch {
+      // fall through to the legacy key
+    }
+  }
+
+  return (
+    Deno.env.get('SUPABASE_ANON_KEY') ??
+    Deno.env.get('ANON_KEY') ??
+    ''
+  )
+}
+
+async function broadcastScheduleChange(
+  action: 'create' | 'update' | 'delete',
+  details: {
+    id?: string | null
+    date?: string | null
+    prevDate?: string | null
+    source?: string | null
+  },
+) {
+  const url = (Deno.env.get('SUPABASE_URL') ?? '').replace(/\/+$/, '')
+  const key = dbKey()
+  if (!url || !key) return
+
+  const endpoint = `${url}/realtime/v1/api/broadcast/${REALTIME_CHANNEL}/events/${REALTIME_EVENT}`
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    apikey: key,
+  }
+  if (!key.startsWith('sb_')) {
+    headers.authorization = `Bearer ${key}`
+  }
+
+  try {
+    await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action,
+        id: details.id ?? null,
+        date: details.date ?? null,
+        prevDate: details.prevDate ?? null,
+        source: details.source ?? null,
+        at: new Date().toISOString(),
+      }),
+      signal: AbortSignal.timeout(1500),
+    })
+  } catch {
+    // Broadcast 실패가 일정 저장/수정 응답을 막지 않도록 무시
+  }
+}
+
+function notifyScheduleChange(
+  action: 'create' | 'update' | 'delete',
+  details: {
+    id?: string | null
+    date?: string | null
+    prevDate?: string | null
+    source?: string | null
+  },
+) {
+  const task = broadcastScheduleChange(action, details)
+  const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+  if (runtime && typeof runtime.waitUntil === 'function') {
+    runtime.waitUntil(task)
+    return Promise.resolve()
+  }
+  return task
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -4962,7 +5043,13 @@ async function createSchedule(req: Request) {
     .single()
 
   if (error) throw dbError(error)
-  return jsonResponse(toApiSchedule(data as Record<string, unknown>), 201)
+  const created = toApiSchedule(data as Record<string, unknown>)
+  await notifyScheduleChange('create', {
+    id: String(created.id ?? ''),
+    date: String(created.date ?? ''),
+    source: String(created.source ?? ''),
+  })
+  return jsonResponse(created, 201)
 }
 
 async function updateSchedule(req: Request, id: string) {
@@ -5105,7 +5192,18 @@ async function updateSchedule(req: Request, id: string) {
     .single()
 
   if (error) throw dbError(error)
-  return jsonResponse(toApiSchedule(data as Record<string, unknown>), 200)
+  const updated = toApiSchedule(data as Record<string, unknown>)
+  const prevDate =
+    typeof existing.date === 'string' && existing.date !== updated.date
+      ? existing.date
+      : null
+  await notifyScheduleChange('update', {
+    id: String(updated.id ?? ''),
+    date: String(updated.date ?? ''),
+    prevDate,
+    source: String(updated.source ?? ''),
+  })
+  return jsonResponse(updated, 200)
 }
 
 async function deleteSchedule(id: string) {
@@ -5122,13 +5220,19 @@ async function deleteSchedule(id: string) {
     .from('schedules')
     .delete()
     .eq('id', id)
-    .select('id')
+    .select('id, date, source')
     .maybeSingle()
 
   if (error) throw dbError(error)
   if (!data) {
     throw new ApiError(404, 'NOT_FOUND', '일정을 찾을 수 없습니다.')
   }
+
+  await notifyScheduleChange('delete', {
+    id: String(data.id ?? id),
+    date: typeof data.date === 'string' ? data.date : null,
+    source: typeof data.source === 'string' ? data.source : null,
+  })
 
   return new Response(null, { status: 204, headers: CORS_HEADERS })
 }
@@ -5196,6 +5300,7 @@ async function meta(householdId: string) {
       fixedExpenseHistory: 'GET /v1/fixed-expenses/:id/history',
       schedules: 'GET/POST /v1/schedules?date=YYYY-MM-DD',
       schedule: 'PATCH/DELETE /v1/schedules/:id',
+      realtimeConfig: 'GET /v1/realtime-config',
     },
   }
 }
@@ -5227,6 +5332,18 @@ async function handle(req: Request): Promise<Response> {
   }
 
   requireApiKey(req)
+
+  if (path === '/v1/realtime-config' && method === 'GET') {
+    const supabaseUrl = (Deno.env.get('SUPABASE_URL') ?? '').replace(/\/+$/, '')
+    const supabaseAnonKey = publicClientKey()
+    return jsonResponse({
+      enabled: Boolean(supabaseUrl && supabaseAnonKey),
+      supabaseUrl,
+      supabaseAnonKey,
+      channel: REALTIME_CHANNEL,
+      event: REALTIME_EVENT,
+    })
+  }
 
   if (path === '/v1/schedules') {
     if (method === 'GET') return listSchedules(req)

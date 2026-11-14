@@ -180,6 +180,81 @@
     return merged;
   }
 
+  function encodeBase64Url(str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 1) {
+      bin += String.fromCharCode(bytes[i]);
+    }
+    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  function decodeBase64Url(b64u) {
+    const norm = String(b64u || "").replace(/-/g, "+").replace(/_/g, "/");
+    const padded = norm + "=".repeat((4 - (norm.length % 4)) % 4);
+    const bin = atob(padded);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) {
+      bytes[i] = bin.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  }
+
+  function applyHashConnection() {
+    const hash = global.location?.hash || "";
+    if (!hash || hash.length < 2) return { applied: false };
+
+    let api = "";
+    let token = "";
+    try {
+      const params = new URLSearchParams(hash.slice(1));
+      const connectParam = params.get("connect");
+      if (connectParam) {
+        const parsed = JSON.parse(decodeBase64Url(connectParam));
+        if (parsed && typeof parsed === "object") {
+          api = String(parsed.api || parsed.url || parsed.u || "").trim();
+          token = String(parsed.token || parsed.t || "").trim();
+        }
+      } else if (params.has("api") || params.has("token")) {
+        api = String(params.get("api") || "").trim();
+        token = String(params.get("token") || "").trim();
+      }
+    } catch {
+      return { applied: false };
+    }
+
+    if (!/^https?:\/\/.+/i.test(api) || !token) {
+      return { applied: false };
+    }
+
+    saveSettings({
+      mode: "agent",
+      agentApiUrl: api,
+      agentApiToken: token
+    });
+
+    try {
+      const cleanUrl = `${global.location.pathname || "/"}${global.location.search || ""}`;
+      global.history?.replaceState?.(null, "", cleanUrl);
+    } catch {
+      // ignore history errors
+    }
+
+    return { applied: true, api };
+  }
+
+  function buildConnectUrl(customUrl, customToken) {
+    const s = getSettings();
+    const api = String(customUrl !== undefined ? customUrl : s.agentApiUrl || "").trim().replace(/\/+$/, "");
+    const token = String(customToken !== undefined ? customToken : s.agentApiToken || "").trim();
+    if (!/^https?:\/\/.+/i.test(api) || !token) {
+      return null;
+    }
+    const base = `${global.location.origin}${global.location.pathname}`;
+    const encoded = encodeBase64Url(JSON.stringify({ api, token }));
+    return `${base}#connect=${encoded}`;
+  }
+
   function getPrefs() {
     try {
       const raw = localStorage.getItem(PREFS_KEY);
@@ -398,6 +473,7 @@
     const res = await fetch(url, {
       method: options.method || "GET",
       headers,
+      cache: "no-store",
       body: options.body ? JSON.stringify(options.body) : undefined
     });
 
@@ -445,6 +521,23 @@
     } catch {
       // ignore quota errors
     }
+  }
+
+  function clearCachedSchedules(dateStr) {
+    if (!dateStr) return;
+    try {
+      localStorage.removeItem(AGENT_CACHE_PREFIX + dateStr);
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  async function fetchRealtimeConfig() {
+    const settings = getSettings();
+    if (settings.mode !== "agent" || !settings.agentApiUrl || !settings.agentApiToken) {
+      return { enabled: false };
+    }
+    return requestAgentApi(settings, "/v1/realtime-config");
   }
 
   async function fetchSchedules(dateStr) {
@@ -629,6 +722,8 @@
     minutesToHhmm,
     getSettings,
     saveSettings,
+    applyHashConnection,
+    buildConnectUrl,
     getPrefs,
     savePrefs,
     resetLocalSeed,
@@ -638,6 +733,8 @@
     sortSchedules,
     getCachedSchedules,
     setCachedSchedules,
+    clearCachedSchedules,
+    fetchRealtimeConfig,
     fetchSchedules,
     fetchSchedulesRange,
     createSchedule,

@@ -750,6 +750,10 @@ html[data-theme="light"] .action-btn {
 }
 .source-dot.local { background: #64748b; }
 .source-dot.agent { background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, 0.55); }
+.source-dot.agent.realtime {
+  background: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.22), 0 0 10px rgba(16, 185, 129, 0.7);
+}
 .source-dot.agent-warn { background: #f59e0b; }
 
 /* 3단 워크스페이스 그리드 */
@@ -2106,6 +2110,41 @@ html[data-theme="light"] .modal-backdrop {
   color: var(--text-muted);
 }
 
+.connect-link-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 9px 10px;
+}
+
+.connect-link-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.connect-link-info strong {
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.connect-link-info p {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.connect-link-box .btn-secondary {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 6px 10px;
+}
+
 .muse-snippet-box {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -2205,7 +2244,8 @@ html[data-theme="light"] .modal-backdrop {
 
 @media (max-width: 960px) {
   html, body {
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
   .app-shell {
     height: auto;
@@ -2213,6 +2253,19 @@ html[data-theme="light"] .modal-backdrop {
   }
   .top-header {
     flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 14px;
+  }
+  .header-left {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .now-banner,
+  .now-banner.dynamic-island {
+    order: 3;
+    flex: 1 1 100%;
+    max-width: 100%;
+    min-width: 0;
   }
   .header-right {
     flex-wrap: wrap;
@@ -2226,5 +2279,107 @@ html[data-theme="light"] .modal-backdrop {
   }
   .mode-selector {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .top-header {
+    padding: 8px 12px;
+  }
+  .brand-sub {
+    display: none;
+  }
+  .header-right {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 6px;
+  }
+  .control-pill input[type="range"] {
+    width: 48px;
+  }
+}
+
+/* 터치/모바일 환경: 오터치 방지 및 스크롤 우선 처리 */
+@media (hover: none), (pointer: coarse) {
+  button,
+  .chip-btn,
+  .icon-btn,
+  .toggle-btn,
+  .action-btn,
+  .q-btn,
+  .island-act-btn,
+  .filter-chip,
+  .now-banner.dynamic-island {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .hour-rows-layer {
+    touch-action: pan-y manipulation;
+  }
+
+  /* 터치 시 hover 고착으로 다이나믹 아일랜드가 멋대로 열리지 않도록 차단 (탭으로만 토글) */
+  .now-banner.dynamic-island:hover:not(.is-expanded) {
+    transform: none;
+  }
+  .now-banner.dynamic-island:hover:not(.is-expanded) .island-chevron {
+    transform: none;
+    color: #94a3b8;
+  }
+  .now-banner.dynamic-island:hover:not(.is-expanded) .island-expanded,
+  .now-banner.dynamic-island:focus-within:not(.is-expanded) .island-expanded {
+    transform: translateX(calc(-50% + var(--island-offset-x, 0px))) translateY(-8px) scale(0.94);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* 이벤트 블록: 기본은 세로 스크롤(pan-y) 허용, 한 번 탭해 선택(.is-selected)되어 핸들이 활성화되면 이동/리사이즈 가능 */
+  .event-block {
+    touch-action: pan-y;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+  }
+
+  .event-block.is-selected {
+    touch-action: none;
+  }
+
+  .event-block.is-dragging {
+    touch-action: none;
+    transform: scale(1.015);
+  }
+
+  /* hover 기반 빠른 액션/리사이즈 핸들 노출 비활성화 (명시적 탭 선택 .is-selected 시에만 표시) */
+  .event-block:hover:not(.is-selected) .event-quick-actions {
+    display: none;
+  }
+
+  .event-block:hover:not(.is-selected) .resize-handle::after {
+    opacity: 0;
+  }
+
+  .event-block .resize-handle {
+    pointer-events: none;
+  }
+
+  .event-block.is-selected .resize-handle {
+    pointer-events: auto;
+    touch-action: none;
+    height: 14px;
+  }
+
+  .event-block.is-selected .q-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+
+  .event-block.is-selected .q-btn.q-icon {
+    width: 26px;
+    height: 24px;
+  }
+
+  .event-check {
+    width: 18px;
+    height: 18px;
   }
 }
