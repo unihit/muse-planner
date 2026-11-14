@@ -927,9 +927,17 @@ async function createRoutine(req: Request) {
 
   if (error) throw dbError(error)
 
-  if (body.apply_today !== false) {
+  if (body.apply_today !== false && data.enabled) {
     try {
-      await db().rpc('apply_routines_for_date', { target_date: todayKst() })
+      const targetToday = todayKst()
+      const includePast = Boolean(body.include_past)
+      const { data: appliedCount } = await db().rpc('apply_routines_for_date', {
+        target_date: targetToday,
+        include_past: includePast,
+      })
+      if (Number(appliedCount) > 0) {
+        await notifyScheduleChange('create', { date: targetToday, source: 'app' })
+      }
     } catch {
       // ignore auto-apply failure
     }

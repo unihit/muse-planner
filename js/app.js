@@ -38,16 +38,22 @@
   let isBackgroundSyncing = false;
   let lastSyncCheckAt = 0;
   let lastUserMutationAt = 0;
+  let lastSyncedAt = null;
+  let isNetworkOnline = typeof navigator !== "undefined" ? navigator.onLine !== false : true;
   let loadRequestToken = 0;
   let backlogLoadToken = 0;
   let undoStack = [];
   let realtimeClient = null;
   let realtimeChannel = null;
+  let realtimeBroadcastChannel = null;
   let realtimeConnected = false;
   let realtimeConfigKey = "";
   let realtimeConnecting = false;
   let realtimeDebounceTimer = null;
-  let deferredBroadcastSyncTimer = null;
+  let deferredRealtimeFlushTimer = null;
+  let pendingRealtimeEvents = [];
+  let isFlushingRealtimeEvents = false;
+  let recentLocalMutations = new Map();
   let lastIntervalPollAt = 0;
   let supabaseSession = null;
   let zoomRafId = null;
@@ -99,6 +105,7 @@
     openSettingsBtn: document.getElementById("openSettingsBtn"),
     apiSourceDot: document.getElementById("apiSourceDot"),
     apiSourceLabel: document.getElementById("apiSourceLabel"),
+    apiSyncTimeLabel: document.getElementById("apiSyncTimeLabel"),
 
     stagingDock: document.getElementById("stagingDock"),
     stagedCountBadge: document.getElementById("stagedCountBadge"),
@@ -871,14 +878,44 @@
     updateCarryOverButtonUi();
   }
 
+  function formatSyncTimeHHMM(dateObj) {
+    if (!(dateObj instanceof Date) || Number.isNaN(dateObj.getTime())) return "";
+    const hh = String(dateObj.getHours()).padStart(2, "0");
+    const mm = String(dateObj.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+
+  function markSyncedNow() {
+    lastSyncedAt = new Date();
+    updateApiBadge();
+  }
+
+  function recordLocalMutation(id) {
+    const now = Date.now();
+    lastUserMutationAt = now;
+    if (!id) return;
+    recentLocalMutations.set(id, now);
+    if (recentLocalMutations.size > 100) {
+      for (const [key, ts] of recentLocalMutations.entries()) {
+        if (now - ts > 15000) recentLocalMutations.delete(key);
+      }
+    }
+  }
+
+  function isRecentLocalMutation(id, windowMs = 4500) {
+    if (!id) return false;
+    const ts = recentLocalMutations.get(id);
+    if (!ts) return false;
+    if (Date.now() - ts <= windowMs) return true;
+    recentLocalMutations.delete(id);
+    return false;
+  }
+
   async function loadBacklogQuietly() {
     const token = ++backlogLoadToken;
     const mutAtStart = lastUserMutationAt;
     const settings = PlannerAPI.getSettings();
-    if (
-      backlogItems.length === 0 &&
-      (settings.mode === "agent" || settings.mode === "supabase")
-    ) {
+    if (backlogItems.length === 0 && settings.mode === "supabase") {
       const cachedBacklog = PlannerAPI.getCachedBacklog();
       if (cachedBacklog && mutAtStart === lastUserMutationAt) {
         backlogItems = cachedBacklog;
@@ -890,6 +927,7 @@
       if (token !== backlogLoadToken || mutAtStart !== lastUserMutationAt) return;
       backlogItems = fresh;
       renderLeftPanel();
+      markSyncedNow();
     } catch {
       // 백로그 조회 실패 시 기존 캐시 유지
     }
@@ -919,7 +957,7 @@
       end_at: nextEndAt
     };
 
-    lastUserMutationAt = Date.now();
+    recordLocalMutation(item.id);
     const prevSchedules = [...schedules];
     const prevBacklog = [...backlogItems];
 
@@ -928,54 +966,25 @@
       toDate
     );
 
-    if (nextIsBacklog) {
-      schedules = schedules.filter((s) => s.id !== item.id);
-      backlogItems = PlannerAPI.sortSchedules([...backlogItems.filter((b) => b.id !== item.id), optimistic]);
-    } else {
-      backlogItems = backlogItems.filter((b) => b.id !== item.id);
-      if (toDate === currentDate) {
-        schedules = PlannerAPI.sortSchedules([...schedules.filter((s) => s.id !== item.id), optimistic]);
-      }
-    }
-    renderAll();
-    syncSwrCacheIfCurrent(currentDate, schedules);
-    syncSwrCacheIfCurrent(null, backlogItems);
+    upsertRecordInState(optimistic, { prevDate, render: true, syncCache: true });
 
     try {
       const updated = await PlannerAPI.patchSchedule(item.id, patchPayload, prevDate);
       if (updated) {
-        if (updated.date === null) {
-          backlogItems = PlannerAPI.sortSchedules([
-            ...backlogItems.filter((b) => b.id !== updated.id),
-            updated
-          ]);
-        } else if (updated.date === currentDate) {
-          schedules = PlannerAPI.sortSchedules([
-            ...schedules.filter((s) => s.id !== updated.id),
-            updated
-          ]);
-        }
-        renderAll();
-        syncSwrCacheIfCurrent(currentDate, schedules);
-        syncSwrCacheIfCurrent(null, backlogItems);
+        recordLocalMutation(updated.id);
+        upsertRecordInState(updated, { prevDate, render: true, syncCache: true });
       }
+      markSyncedNow();
 
       pushUndoAction(
         nextIsBacklog ? `'${item.title}' 백로그 보관` : `'${item.title}' 오늘로 이동`,
         async () => {
-          lastUserMutationAt = Date.now();
+          recordLocalMutation(item.id);
           const reverted = await PlannerAPI.patchSchedule(item.id, prevSnap, toDate);
           if (reverted) {
-            backlogItems = backlogItems.filter((b) => b.id !== reverted.id);
-            schedules = schedules.filter((s) => s.id !== reverted.id);
-            if (reverted.date === null) {
-              backlogItems = PlannerAPI.sortSchedules([...backlogItems, reverted]);
-            } else if (reverted.date === currentDate) {
-              schedules = PlannerAPI.sortSchedules([...schedules, reverted]);
-            }
-            renderAll();
-            syncSwrCacheIfCurrent(currentDate, schedules);
-            syncSwrCacheIfCurrent(null, backlogItems);
+            recordLocalMutation(reverted.id);
+            upsertRecordInState(reverted, { prevDate: toDate, render: true, syncCache: true });
+            markSyncedNow();
           }
         }
       );
@@ -1036,7 +1045,11 @@
 
   async function loadDay(dateStr, scrollOptimal = true) {
     const reqToken = ++loadRequestToken;
+    const dateChanged = currentDate !== dateStr;
     currentDate = dateStr;
+    if (dateChanged) {
+      pendingRealtimeEvents = [];
+    }
     carryOverCount = 0;
     updateCarryOverButtonUi();
     updateDateDisplay(dateStr);
@@ -1046,10 +1059,7 @@
     widgetsState = PlannerAPI.loadWidgetsState(dateStr);
 
     const settings = PlannerAPI.getSettings();
-    const cached =
-      settings.mode === "agent" || settings.mode === "supabase"
-        ? PlannerAPI.getCachedSchedules(dateStr)
-        : null;
+    const cached = settings.mode === "supabase" ? PlannerAPI.getCachedSchedules(dateStr) : null;
     if (cached) {
       schedules = cached;
       renderAll();
@@ -1066,6 +1076,7 @@
       schedules = fresh;
       renderAll();
       refreshCarryOverCount(dateStr);
+      markSyncedNow();
       if (!cached && scrollOptimal) {
         scrollToOptimalPosition();
       }
@@ -1087,39 +1098,87 @@
       .join("\n");
   }
 
+  function isSameScheduleContent(a, b) {
+    if (!a || !b) return false;
+    return (
+      (a.date ?? null) === (b.date ?? null) &&
+      String(a.title || "") === String(b.title || "") &&
+      String(a.type || "") === String(b.type || "") &&
+      (a.start_at || null) === (b.start_at || null) &&
+      (a.end_at || null) === (b.end_at || null) &&
+      Boolean(a.done) === Boolean(b.done) &&
+      String(a.memo || "") === String(b.memo || "") &&
+      (a.template_id || null) === (b.template_id || null)
+    );
+  }
+
+  function isUserEditingOrDragging() {
+    if (activeHtmlDragPayload || activePointerDrag) return true;
+    if (el.eventModal && !el.eventModal.classList.contains("hidden")) return true;
+    return false;
+  }
+
+  function upsertRecordInState(record, options = {}) {
+    if (!record) return;
+    const { prevDate, render = true, syncCache = true } = options;
+    schedules = schedules.filter((s) => s.id !== record.id);
+    backlogItems = backlogItems.filter((b) => b.id !== record.id);
+    if (record.date === null) {
+      backlogItems = PlannerAPI.sortSchedules([...backlogItems, record]);
+    } else if (record.date === currentDate) {
+      schedules = PlannerAPI.sortSchedules([...schedules, record]);
+    }
+    if (syncCache && PlannerAPI.getSettings().mode === "supabase") {
+      PlannerAPI.syncCacheForRecord(record, prevDate);
+    }
+    if (render) {
+      renderAll();
+      if (record.date === currentDate || prevDate === currentDate) {
+        refreshCarryOverCount(currentDate);
+      }
+    }
+  }
+
+  function removeRecordFromState(id, dateHint, options = {}) {
+    if (!id) return;
+    const { render = true, syncCache = true } = options;
+    const removedDay = schedules.find((s) => s.id === id);
+    const removedBacklog = backlogItems.find((b) => b.id === id);
+    schedules = schedules.filter((s) => s.id !== id);
+    backlogItems = backlogItems.filter((b) => b.id !== id);
+    if (selectedEventId === id) selectedEventId = null;
+    if (syncCache && PlannerAPI.getSettings().mode === "supabase") {
+      const resolvedHint =
+        dateHint !== undefined
+          ? dateHint
+          : removedBacklog
+            ? null
+            : removedDay
+              ? removedDay.date
+              : undefined;
+      PlannerAPI.removeFromCacheAfterDelete(id, resolvedHint);
+    }
+    if (render) {
+      renderAll();
+      if (removedDay) refreshCarryOverCount(currentDate);
+    }
+  }
+
   function isAutoSyncPaused(options = {}) {
     if (!options.ignoreInFlight && isBackgroundSyncing) return true;
-    if (document.hidden || activeHtmlDragPayload || activePointerDrag) return true;
+    if (!isNetworkOnline) return true;
+    if (document.hidden || isUserEditingOrDragging()) return true;
     if (Date.now() - lastUserMutationAt < 2500) return true;
     if (document.querySelector(".modal-backdrop:not(.hidden)")) return true;
-    if (!supabaseSession) return true;
+    if (PlannerAPI.getSettings().mode !== "supabase" || !supabaseSession) return true;
     return false;
   }
 
   async function syncIfChanged(showNotify = true, options = {}) {
     const now = Date.now();
     const force = Boolean(options.force);
-    if (!force && now - lastSyncCheckAt < 2000) return;
-
-    if (options.fromBroadcast) {
-      const mutationElapsed = now - lastUserMutationAt;
-      if (mutationElapsed < 2500) {
-        clearTimeout(deferredBroadcastSyncTimer);
-        deferredBroadcastSyncTimer = setTimeout(() => {
-          syncIfChanged(showNotify, { force: true });
-        }, 2600 - mutationElapsed);
-        return;
-      }
-      if (isBackgroundSyncing) {
-        clearTimeout(deferredBroadcastSyncTimer);
-        deferredBroadcastSyncTimer = setTimeout(() => {
-          syncIfChanged(showNotify, { force: true, fromBroadcast: true });
-        }, 300);
-        return;
-      }
-    }
-
-    if (isAutoSyncPaused()) return;
+    if (!force && now - lastSyncCheckAt < 2000) return false;
+    if (isAutoSyncPaused()) return false;
 
     lastSyncCheckAt = now;
     isBackgroundSyncing = true;
@@ -1130,48 +1189,299 @@
         PlannerAPI.fetchSchedules(targetDate, { applyRoutines: false }),
         PlannerAPI.fetchBacklog()
       ]);
-      if (targetDate !== currentDate || isAutoSyncPaused({ ignoreInFlight: true })) return;
+      if (targetDate !== currentDate || isAutoSyncPaused({ ignoreInFlight: true })) return false;
 
       const dayChanged = getScheduleSignature(fresh) !== getScheduleSignature(schedules);
       const backlogChanged = getScheduleSignature(freshBacklog) !== getScheduleSignature(backlogItems);
+      markSyncedNow();
       if (dayChanged || backlogChanged) {
         schedules = fresh;
         backlogItems = freshBacklog;
         renderAll();
         refreshCarryOverCount(targetDate);
         if (showNotify) {
-          showToast("일정 변경사항이 실시간 반영되었습니다.", "⚡");
+          showToast(
+            options.deferred ? "외부 변경이 있어 새로고침했어요" : "일정 변경사항이 실시간 반영되었습니다.",
+            options.deferred ? "🔄" : "⚡"
+          );
         }
+        return true;
       }
+      return false;
     } catch {
       // 백그라운드 동기화 실패 시 조용히 다음 주기에 재시도
+      return false;
     } finally {
       isBackgroundSyncing = false;
     }
   }
 
+  function queuePendingRealtimeEvent(eventObj) {
+    if (!eventObj) return;
+    if (eventObj.id) {
+      const idx = pendingRealtimeEvents.findIndex((e) => e.id === eventObj.id);
+      if (idx !== -1) {
+        const prev = pendingRealtimeEvents[idx];
+        // DELETE가 아니면서 기존 postgres payload가 이미 있고 새 이벤트가 broadcast면 payload 정보 유지
+        if (prev.kind === "postgres" && eventObj.kind === "broadcast" && eventObj.action !== "delete") {
+          pendingRealtimeEvents[idx] = { ...prev, receivedAt: eventObj.receivedAt };
+        } else {
+          pendingRealtimeEvents[idx] = eventObj;
+        }
+        return;
+      }
+    } else {
+      const dupIdx = pendingRealtimeEvents.findIndex(
+        (e) => !e.id && e.kind === eventObj.kind && e.action === eventObj.action && e.date === eventObj.date
+      );
+      if (dupIdx !== -1) {
+        pendingRealtimeEvents[dupIdx] = eventObj;
+        return;
+      }
+    }
+    pendingRealtimeEvents.push(eventObj);
+  }
+
+  function isIncomingRowStale(existing, normalized) {
+    if (!existing || !normalized) return false;
+    if (existing.updated_at && normalized.updated_at) {
+      const inTs = Date.parse(normalized.updated_at);
+      const curTs = Date.parse(existing.updated_at);
+      if (!Number.isNaN(inTs) && !Number.isNaN(curTs) && inTs < curTs) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function mergeNormalizedRecordFromRealtime(normalized) {
+    const existing = findItemById(normalized.id);
+    if (isIncomingRowStale(existing, normalized)) {
+      return { changed: false, isExternal: false };
+    }
+    const relevantToView =
+      existing !== null || normalized.date === null || normalized.date === currentDate;
+    if (!relevantToView) {
+      PlannerAPI.syncCacheForRecord(normalized);
+      return { changed: false, isExternal: false };
+    }
+    if (existing && isSameScheduleContent(existing, normalized)) {
+      if (normalized.updated_at && normalized.updated_at !== existing.updated_at) {
+        upsertRecordInState(normalized, {
+          prevDate: existing.date ?? null,
+          render: false,
+          syncCache: true
+        });
+      }
+      return { changed: false, isExternal: false };
+    }
+    const isExternal = !isRecentLocalMutation(normalized.id);
+    upsertRecordInState(normalized, {
+      prevDate: existing ? existing.date ?? null : undefined,
+      render: true,
+      syncCache: true
+    });
+    return { changed: true, isExternal };
+  }
+
+  async function processRealtimeEvent(eventObj, options = {}) {
+    const { fromDeferred = false } = options;
+    if (!eventObj) return { changed: false, isExternal: false };
+
+    if (eventObj.id) {
+      const mutTs = recentLocalMutations.get(eventObj.id);
+      if (fromDeferred && mutTs && eventObj.receivedAt < mutTs) {
+        return { changed: false, isExternal: false };
+      }
+    }
+
+    if (eventObj.kind === "postgres") {
+      const existing = eventObj.id ? findItemById(eventObj.id) : null;
+      if (eventObj.eventType === "DELETE") {
+        if (!existing) {
+          PlannerAPI.removeFromCacheAfterDelete(eventObj.id, eventObj.oldRow?.date ?? null);
+          return { changed: false, isExternal: false };
+        }
+        const isExternal = !isRecentLocalMutation(eventObj.id);
+        removeRecordFromState(eventObj.id, existing.date ?? null, { render: true, syncCache: true });
+        return { changed: true, isExternal };
+      }
+      if (eventObj.newRow) {
+        const normalized = PlannerAPI.normalizeScheduleRecord(
+          eventObj.newRow,
+          eventObj.newRow.date ?? null
+        );
+        return mergeNormalizedRecordFromRealtime(normalized);
+      }
+      return { changed: false, isExternal: false };
+    }
+
+    if (eventObj.kind === "broadcast") {
+      if (eventObj.action === "delete" && eventObj.id) {
+        const existing = findItemById(eventObj.id);
+        if (!existing) {
+          PlannerAPI.removeFromCacheAfterDelete(eventObj.id, eventObj.date);
+          return { changed: false, isExternal: false };
+        }
+        const isExternal = !isRecentLocalMutation(eventObj.id);
+        removeRecordFromState(eventObj.id, existing.date ?? null, { render: true, syncCache: true });
+        return { changed: true, isExternal };
+      }
+
+      if ((eventObj.action === "create" || eventObj.action === "update") && eventObj.id) {
+        const sb = await PlannerAPI.getSupabaseClient();
+        const { data, error } = await sb
+          .from("schedules")
+          .select(PlannerAPI.SCHEDULE_COLUMNS)
+          .eq("id", eventObj.id)
+          .maybeSingle();
+
+        if (error) return { changed: false, isExternal: false };
+        if (isUserEditingOrDragging()) {
+          queuePendingRealtimeEvent(eventObj);
+          return { changed: false, isExternal: false };
+        }
+
+        if (!data) {
+          const existing = findItemById(eventObj.id);
+          if (existing) {
+            const isExternal = !isRecentLocalMutation(eventObj.id);
+            removeRecordFromState(eventObj.id, existing.date ?? null, { render: true, syncCache: true });
+            return { changed: true, isExternal };
+          }
+          return { changed: false, isExternal: false };
+        }
+
+        const normalized = PlannerAPI.normalizeScheduleRecord(data, data.date ?? null);
+        return mergeNormalizedRecordFromRealtime(normalized);
+      }
+
+      // batch / routine 등 id가 없는 브로드캐스트만 전체 새로고침
+      const didSync = await syncIfChanged(false, { force: true });
+      return { changed: didSync, isExternal: didSync };
+    }
+
+    return { changed: false, isExternal: false };
+  }
+
+  async function flushPendingRealtimeEvents() {
+    if (isFlushingRealtimeEvents || !pendingRealtimeEvents.length) return;
+    if (isUserEditingOrDragging()) return;
+    if (PlannerAPI.getSettings().mode !== "supabase" || !supabaseSession) return;
+
+    isFlushingRealtimeEvents = true;
+    let appliedExternalCount = 0;
+    let processedAny = false;
+
+    try {
+      while (pendingRealtimeEvents.length > 0) {
+        if (isUserEditingOrDragging()) break;
+        const batch = pendingRealtimeEvents.splice(0, pendingRealtimeEvents.length);
+        // 같은 batch 내에서 full payload가 있는 postgres 이벤트를 먼저 반영하고 동일 id의 broadcast 중복 fetch는 생략
+        const postgresIdsInBatch = new Set(
+          batch.filter((e) => e.kind === "postgres" && e.id).map((e) => e.id)
+        );
+        const orderedBatch = [
+          ...batch.filter((e) => e.kind === "postgres"),
+          ...batch.filter((e) => e.kind !== "postgres")
+        ];
+
+        for (const ev of orderedBatch) {
+          if (isUserEditingOrDragging()) {
+            queuePendingRealtimeEvent(ev);
+            break;
+          }
+          if (ev.kind === "broadcast" && ev.id && postgresIdsInBatch.has(ev.id)) {
+            continue;
+          }
+          try {
+            const res = await processRealtimeEvent(ev, { fromDeferred: true });
+            processedAny = true;
+            if (res.changed && res.isExternal) {
+              appliedExternalCount += 1;
+            }
+          } catch {
+            // ignore individual flush failure
+          }
+        }
+      }
+      if (processedAny) {
+        markSyncedNow();
+      }
+      if (appliedExternalCount > 0) {
+        showToast("외부 변경이 있어 새로고침했어요", "🔄");
+      }
+    } finally {
+      isFlushingRealtimeEvents = false;
+      if (pendingRealtimeEvents.length > 0 && !isUserEditingOrDragging()) {
+        scheduleFlushPendingRealtime();
+      }
+    }
+  }
+
+  function scheduleFlushPendingRealtime(delayMs = 120) {
+    if (!pendingRealtimeEvents.length) return;
+    clearTimeout(deferredRealtimeFlushTimer);
+    deferredRealtimeFlushTimer = setTimeout(() => {
+      flushPendingRealtimeEvents();
+    }, delayMs);
+  }
+
+  async function handleIncomingRealtimeEvent(eventObj) {
+    if (isUserEditingOrDragging()) {
+      queuePendingRealtimeEvent(eventObj);
+      return;
+    }
+    try {
+      const res = await processRealtimeEvent(eventObj, { fromDeferred: false });
+      markSyncedNow();
+      if (res.changed && res.isExternal) {
+        showToast("일정 변경사항이 실시간 반영되었습니다.", "⚡");
+      }
+    } catch {
+      // ignore realtime apply failure
+    }
+  }
+
+  let realtimeDbSubOk = false;
+  let realtimeBroadcastSubOk = false;
+  let wasRealtimeConnectedOnce = false;
+  let hasDisconnectedRealtime = false;
+
   async function disconnectRealtime() {
     clearTimeout(realtimeDebounceTimer);
-    clearTimeout(deferredBroadcastSyncTimer);
-    const ch = realtimeChannel;
+    clearTimeout(deferredRealtimeFlushTimer);
+    const dbCh = realtimeChannel;
+    const bcCh = realtimeBroadcastChannel;
     const client = realtimeClient;
     realtimeChannel = null;
+    realtimeBroadcastChannel = null;
     realtimeClient = null;
     realtimeConfigKey = "";
+    realtimeDbSubOk = false;
+    realtimeBroadcastSubOk = false;
     if (realtimeConnected) {
       realtimeConnected = false;
       updateApiBadge();
     }
-    if (client && ch) {
-      try {
-        await client.removeChannel(ch);
-      } catch {
-        // ignore cleanup error
+    if (client) {
+      for (const ch of [dbCh, bcCh]) {
+        if (!ch) continue;
+        try {
+          await client.removeChannel(ch);
+        } catch {
+          // ignore cleanup error
+        }
       }
     }
   }
 
   async function setupRealtimeSync(forceReconnect = false) {
+    if (PlannerAPI.getSettings().mode !== "supabase") {
+      await disconnectRealtime();
+      updateApiBadge();
+      return;
+    }
     if (!supabaseSession) {
       try {
         supabaseSession = await PlannerAPI.getSupabaseSession();
@@ -1185,7 +1495,10 @@
     }
 
     const nextKey = `supabase|${supabaseSession.user?.id || ""}`;
-    if (!forceReconnect && (realtimeConnecting || (realtimeChannel && realtimeConfigKey === nextKey))) {
+    if (
+      !forceReconnect &&
+      (realtimeConnecting || (realtimeChannel && realtimeBroadcastChannel && realtimeConfigKey === nextKey))
+    ) {
       return;
     }
 
@@ -1196,45 +1509,109 @@
 
       realtimeConfigKey = nextKey;
       realtimeClient = sb;
+
+      const updateConnectionStatus = (channelType, status) => {
+        if (channelType === "db") {
+          realtimeDbSubOk = status === "SUBSCRIBED";
+        } else if (channelType === "broadcast") {
+          realtimeBroadcastSubOk = status === "SUBSCRIBED";
+        }
+        if (status === "CLOSED" || status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          if (channelType === "db") realtimeDbSubOk = false;
+          if (channelType === "broadcast") realtimeBroadcastSubOk = false;
+        }
+        const prevConnected = realtimeConnected;
+        const nextConnected = isNetworkOnline && (realtimeDbSubOk || realtimeBroadcastSubOk);
+        if (prevConnected !== nextConnected) {
+          realtimeConnected = nextConnected;
+          updateApiBadge();
+        }
+        if (nextConnected) {
+          const shouldCatchUp = hasDisconnectedRealtime;
+          hasDisconnectedRealtime = false;
+          wasRealtimeConnectedOnce = true;
+          if (shouldCatchUp) {
+            syncIfChanged(true, { force: true });
+          }
+        } else if (wasRealtimeConnectedOnce) {
+          hasDisconnectedRealtime = true;
+        }
+      };
+
       realtimeChannel = sb
         .channel("muse-schedules-db")
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "schedules" },
           (payload) => {
-            const nextRow = payload?.new || {};
-            const oldRow = payload?.old || {};
-            const changedDate = nextRow.date || null;
-            const oldDate = oldRow.date || null;
+            const eventType = String(payload?.eventType || "").toUpperCase();
+            const nextRow = payload?.new && Object.keys(payload.new).length ? payload.new : null;
+            const oldRow = payload?.old && Object.keys(payload.old).length ? payload.old : null;
+            const id = nextRow?.id || oldRow?.id || null;
+            const changedDate = nextRow ? nextRow.date ?? null : undefined;
+            const oldDate = oldRow ? oldRow.date ?? null : undefined;
 
-            if (changedDate && changedDate !== currentDate) {
-              PlannerAPI.clearCachedSchedules(changedDate);
+            if (changedDate !== undefined && changedDate !== currentDate) {
+              PlannerAPI.invalidateScheduleCache(changedDate);
             }
-            if (oldDate && oldDate !== currentDate) {
-              PlannerAPI.clearCachedSchedules(oldDate);
+            if (oldDate !== undefined && oldDate !== currentDate) {
+              PlannerAPI.invalidateScheduleCache(oldDate);
             }
 
+            const existing = id ? findItemById(id) : null;
             const affectsCurrent =
-              (!changedDate && !oldDate) ||
-              (nextRow.id && nextRow.date === null) ||
-              (oldRow.id && oldRow.date === null) ||
+              existing !== null ||
+              changedDate === null ||
+              oldDate === null ||
               changedDate === currentDate ||
               oldDate === currentDate;
             if (!affectsCurrent) return;
 
-            clearTimeout(realtimeDebounceTimer);
-            realtimeDebounceTimer = setTimeout(() => {
-              syncIfChanged(true, { force: true, fromBroadcast: true });
-            }, 180);
+            handleIncomingRealtimeEvent({
+              kind: "postgres",
+              eventType,
+              id,
+              newRow: nextRow,
+              oldRow,
+              receivedAt: Date.now()
+            });
           }
         )
-        .subscribe((status) => {
-          const isSub = status === "SUBSCRIBED";
-          if (realtimeConnected !== isSub) {
-            realtimeConnected = isSub;
-            updateApiBadge();
-          }
-        });
+        .subscribe((status) => updateConnectionStatus("db", status));
+
+      realtimeBroadcastChannel = sb
+        .channel("muse-schedules")
+        .on("broadcast", { event: "schedules_changed" }, (rawMsg) => {
+          const payload =
+            rawMsg?.payload && typeof rawMsg.payload === "object" ? rawMsg.payload : rawMsg || {};
+          const action = String(payload.action || "").toLowerCase();
+          const id = payload.id || null;
+          const hasDate = Object.prototype.hasOwnProperty.call(payload, "date");
+          const hasPrevDate = Object.prototype.hasOwnProperty.call(payload, "prevDate");
+          const date = hasDate ? payload.date : undefined;
+          const prevDate = hasPrevDate ? payload.prevDate : undefined;
+
+          if (date !== undefined) PlannerAPI.invalidateScheduleCache(date);
+          if (prevDate !== undefined) PlannerAPI.invalidateScheduleCache(prevDate);
+
+          const affectsCurrent =
+            date === null ||
+            prevDate === null ||
+            date === currentDate ||
+            prevDate === currentDate ||
+            (id && findItemById(id) !== null);
+          if (!affectsCurrent) return;
+
+          handleIncomingRealtimeEvent({
+            kind: "broadcast",
+            action,
+            id,
+            date: date === undefined ? null : date,
+            prevDate: prevDate === undefined ? null : prevDate,
+            receivedAt: Date.now()
+          });
+        })
+        .subscribe((status) => updateConnectionStatus("broadcast", status));
     } catch {
       realtimeConnected = false;
       updateApiBadge();
@@ -1292,7 +1669,7 @@
 
   function syncSwrCacheIfCurrent(dateStr, list) {
     const mode = PlannerAPI.getSettings().mode;
-    if (mode === "agent" || mode === "supabase") {
+    if (mode === "supabase") {
       if (dateStr === null) {
         PlannerAPI.setCachedBacklog(list);
       } else {
@@ -1306,16 +1683,12 @@
   }
 
   async function createScheduleAndRecord(payload, toastMsg) {
-    lastUserMutationAt = Date.now();
+    recordLocalMutation();
     const created = await PlannerAPI.createSchedule(payload);
-    if (created.date === null) {
-      backlogItems = PlannerAPI.sortSchedules([...backlogItems.filter((b) => b.id !== created.id), created]);
-      syncSwrCacheIfCurrent(null, backlogItems);
-      renderAll();
-    } else if (created.date === currentDate) {
-      schedules = PlannerAPI.sortSchedules([...schedules.filter((s) => s.id !== created.id), created]);
-      syncSwrCacheIfCurrent(currentDate, schedules);
-      renderAll();
+    recordLocalMutation(created.id);
+    markSyncedNow();
+    if (created.date === null || created.date === currentDate) {
+      upsertRecordInState(created, { render: true, syncCache: true });
     } else {
       await loadDay(created.date, false);
     }
@@ -1340,7 +1713,7 @@
 
     const prev = { ...listRef[idx] };
     const dateHint = isBacklog ? null : currentDate;
-    lastUserMutationAt = Date.now();
+    recordLocalMutation(id);
     const nextItem = {
       ...prev,
       done: checked,
@@ -1366,6 +1739,7 @@
     try {
       const updated = await PlannerAPI.patchSchedule(id, { done: checked }, dateHint);
       if (updated) {
+        recordLocalMutation(id);
         if (isBacklog) {
           const curIdx = backlogItems.findIndex((b) => b.id === id);
           if (curIdx !== -1) backlogItems[curIdx] = updated;
@@ -1377,6 +1751,7 @@
         }
         renderAll();
       }
+      markSyncedNow();
       if (recordUndo) {
         showUndoToast(checked ? `'${prev.title}' 완료!` : `'${prev.title}' 완료 해제`, checked ? "✅" : "↩️", undoEntry);
       }
@@ -1405,25 +1780,16 @@
 
     const prevSchedules = [...schedules];
     const prevBacklog = [...backlogItems];
-    lastUserMutationAt = Date.now();
-    if (isBacklog) {
-      backlogItems = backlogItems.filter((b) => b.id !== id);
-    } else {
-      schedules = schedules.filter((s) => s.id !== id);
-    }
-    if (selectedEventId === id) selectedEventId = null;
-    renderAll();
-    if (isBacklog) {
-      syncSwrCacheIfCurrent(null, backlogItems);
-    } else {
-      syncSwrCacheIfCurrent(currentDate, schedules);
-    }
+    recordLocalMutation(id);
+    removeRecordFromState(id, effectiveDate, { render: true, syncCache: true });
 
     try {
       await PlannerAPI.deleteSchedule(id, effectiveDate);
+      markSyncedNow();
       if (recordUndo && removed) {
         const snapshot = { ...removed };
         const undoEntry = pushUndoAction(`'${snapshot.title}' 삭제`, async () => {
+          recordLocalMutation();
           const recreated = await PlannerAPI.createSchedule({
             date: snapshot.date,
             start_at: snapshot.start_at,
@@ -1433,17 +1799,14 @@
             source: snapshot.source,
             memo: snapshot.memo || ""
           });
+          recordLocalMutation(recreated.id);
           const finalRec = snapshot.done
             ? await PlannerAPI.patchSchedule(recreated.id, { done: true }, snapshot.date)
             : recreated;
-          if (finalRec.date === null) {
-            backlogItems = PlannerAPI.sortSchedules([...backlogItems, finalRec]);
-            renderAll();
-            syncSwrCacheIfCurrent(null, backlogItems);
-          } else if (finalRec.date === currentDate) {
-            schedules = PlannerAPI.sortSchedules([...schedules, finalRec]);
-            renderAll();
-            syncSwrCacheIfCurrent(currentDate, schedules);
+          recordLocalMutation(finalRec.id);
+          markSyncedNow();
+          if (finalRec.date === null || finalRec.date === currentDate) {
+            upsertRecordInState(finalRec, { render: true, syncCache: true });
           } else {
             await loadDay(finalRec.date, false);
           }
@@ -1458,6 +1821,53 @@
       syncSwrCacheIfCurrent(null, backlogItems);
       showToast(`삭제 실패: ${err.message}`, "⚠️");
     }
+  }
+
+  function computeCascadePatches(ev, nextStartMin, nextEndMinOrNull) {
+    const cascadePatches = [];
+    if (!prefs.cascadeMode || !ev || ev.type === "reminder" || nextStartMin === null) {
+      return cascadePatches;
+    }
+    const movedAnchorVisualEnd =
+      nextEndMinOrNull !== null ? nextEndMinOrNull : Math.min(1440, nextStartMin + 30);
+    let cursor = movedAnchorVisualEnd;
+    const others = schedules
+      .filter((s) => {
+        if (s.id === ev.id || !s.hasStartAt || isEffectiveDone(s) || s.type === "reminder") {
+          return false;
+        }
+        // 이동/리사이즈 전부터 이미 겹쳐 있던 일정은 의도된 겹침으로 간주하여 연쇄 밀기에서 제외
+        if (ev.hasStartAt && s.startMin < ev.visualEndMin && s.visualEndMin > ev.startMin) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => a.startMin - b.startMin);
+
+    for (const item of others) {
+      if (item.visualEndMin > nextStartMin && item.startMin < cursor) {
+        const itemSpan = item.hasEndAt ? item.endMin - item.startMin : null;
+        const nextItemStart = clamp(cursor, 0, itemSpan ? 1440 - itemSpan : 1425);
+        const nextItemEnd = itemSpan !== null ? nextItemStart + itemSpan : null;
+        cascadePatches.push({
+          item,
+          id: item.id,
+          date: item.date,
+          nextStartMin: nextItemStart,
+          nextEndMin: nextItemEnd,
+          patch: {
+            start_at: PlannerAPI.kstMinutesToIso(item.date, nextItemStart),
+            end_at:
+              nextItemEnd !== null ? PlannerAPI.kstMinutesToIso(item.date, nextItemEnd) : null
+          }
+        });
+        cursor = Math.max(
+          cursor,
+          nextItemEnd !== null ? nextItemEnd : Math.min(1440, nextItemStart + 30)
+        );
+      }
+    }
+    return cascadePatches;
   }
 
   async function commitScheduleTimeChange(ev, nextStartMin, nextEndMinOrNull, options = {}) {
@@ -1475,52 +1885,28 @@
         ? PlannerAPI.kstMinutesToIso(ev.date, nextEndMinOrNull)
         : null;
 
-    // 연쇄 밀기 대상 계산 (알림은 시점 마커이므로 연쇄 밀기 대상/트리거에서 제외)
-    const cascadePatches = [];
-    if (prefs.cascadeMode && ev.type !== "reminder" && nextStartMin !== null && !hasCustomStart) {
-      const movedAnchorVisualEnd =
-        nextEndMinOrNull !== null ? nextEndMinOrNull : Math.min(1440, nextStartMin + 30);
-      let cursor = movedAnchorVisualEnd;
-      const others = schedules
-        .filter((s) => s.id !== ev.id && s.hasStartAt && !isEffectiveDone(s) && s.type !== "reminder")
-        .sort((a, b) => a.startMin - b.startMin);
-
-      for (const item of others) {
-        if (item.visualEndMin > nextStartMin && item.startMin < cursor) {
-          const itemSpan = item.hasEndAt ? item.endMin - item.startMin : null;
-          const nextItemStart = clamp(cursor, 0, itemSpan ? 1440 - itemSpan : 1425);
-          const nextItemEnd = itemSpan !== null ? nextItemStart + itemSpan : null;
-          affectedSnapshots.push({
-            id: item.id,
-            date: item.date,
-            start_at: item.start_at,
-            end_at: item.end_at
-          });
-          cascadePatches.push({
-            id: item.id,
-            date: item.date,
-            patch: {
-              start_at: PlannerAPI.kstMinutesToIso(item.date, nextItemStart),
-              end_at:
-                nextItemEnd !== null ? PlannerAPI.kstMinutesToIso(item.date, nextItemEnd) : null
-            }
-          });
-          cursor = Math.max(
-            cursor,
-            nextItemEnd !== null ? nextItemEnd : Math.min(1440, nextItemStart + 30)
-          );
-        }
-      }
+    // 연쇄 밀기 대상 계산 (리마인더 및 기존에 이미 겹쳐 있던 일정은 제외)
+    const cascadePatches = !hasCustomStart
+      ? computeCascadePatches(ev, nextStartMin, nextEndMinOrNull)
+      : [];
+    for (const cp of cascadePatches) {
+      affectedSnapshots.push({
+        id: cp.item.id,
+        date: cp.item.date,
+        start_at: cp.item.start_at,
+        end_at: cp.item.end_at
+      });
     }
 
     // 0ms Optimistic 즉시 반영
     const nowIso = new Date().toISOString();
     const patchMap = new Map([[ev.id, { start_at: nextStartIso, end_at: nextEndIso }]]);
+    recordLocalMutation(ev.id);
     for (const cp of cascadePatches) {
       patchMap.set(cp.id, cp.patch);
+      recordLocalMutation(cp.id);
     }
 
-    lastUserMutationAt = Date.now();
     schedules = PlannerAPI.sortSchedules(
       schedules.map((item) => {
         const p = patchMap.get(item.id);
@@ -1538,6 +1924,9 @@
     if (recordUndo) {
       undoEntry = pushUndoAction(`'${ev.title}' 시간 변경`, async () => {
         const undoMap = new Map(affectedSnapshots.map((snapItem) => [snapItem.id, snapItem]));
+        for (const snapItem of affectedSnapshots) {
+          recordLocalMutation(snapItem.id);
+        }
         schedules = PlannerAPI.sortSchedules(
           schedules.map((item) => {
             const snapItem = undoMap.get(item.id);
@@ -1563,6 +1952,7 @@
         schedules = PlannerAPI.sortSchedules(schedules.map((item) => restoredMap.get(item.id) || item));
         syncSwrCacheIfCurrent(currentDate, schedules);
         renderAll();
+        markSyncedNow();
       });
     }
 
@@ -1575,6 +1965,7 @@
       schedules = PlannerAPI.sortSchedules(schedules.map((item) => resultMap.get(item.id) || item));
       syncSwrCacheIfCurrent(currentDate, schedules);
       renderAll();
+      markSyncedNow();
       if (recordUndo && undoEntry && !hasCustomStart) {
         showUndoToast(`'${ev.title}' 시간 변경됨`, "🕒", undoEntry, 4000);
       }
@@ -1646,12 +2037,28 @@
   }
 
   function updateApiBadge() {
-    if (supabaseSession) {
-      el.apiSourceDot.className = realtimeConnected ? "source-dot agent realtime" : "source-dot agent";
-      el.apiSourceLabel.textContent = realtimeConnected ? "실시간 연결" : "계정 연결됨";
-    } else {
-      el.apiSourceDot.className = "source-dot agent-warn";
+    const settings = PlannerAPI.getSettings();
+    if (settings.mode === "local") {
+      el.apiSourceDot.className = "source-dot local";
+      el.apiSourceLabel.textContent = "로컬 모드";
+    } else if (!isNetworkOnline) {
+      el.apiSourceDot.className = "source-dot offline";
+      el.apiSourceLabel.textContent = "오프라인";
+    } else if (!supabaseSession) {
+      el.apiSourceDot.className = "source-dot warn";
       el.apiSourceLabel.textContent = "로그인 필요";
+    } else if (realtimeConnected) {
+      el.apiSourceDot.className = "source-dot online realtime";
+      el.apiSourceLabel.textContent = "실시간 연결";
+    } else {
+      el.apiSourceDot.className = "source-dot disconnected";
+      el.apiSourceLabel.textContent = "연결 끊김";
+    }
+
+    if (el.apiSyncTimeLabel) {
+      const hhmm = lastSyncedAt ? formatSyncTimeHHMM(lastSyncedAt) : "";
+      el.apiSyncTimeLabel.textContent = hhmm ? `마지막 동기화 ${hhmm}` : "";
+      el.apiSyncTimeLabel.classList.toggle("hidden", !hhmm);
     }
   }
 
@@ -1700,6 +2107,7 @@
       pill.addEventListener("dragend", () => {
         activeHtmlDragPayload = null;
         el.ghostPreview.classList.add("hidden");
+        scheduleFlushPendingRealtime();
       });
 
       frag.appendChild(pill);
@@ -1850,6 +2258,7 @@
             card.classList.remove("is-dragging");
             clearDockDropTargets();
             el.ghostPreview.classList.add("hidden");
+            scheduleFlushPendingRealtime();
           });
 
           el.untimedList.appendChild(card);
@@ -1964,6 +2373,7 @@
                 card.classList.remove("is-dragging");
                 clearDockDropTargets();
                 el.ghostPreview.classList.add("hidden");
+                scheduleFlushPendingRealtime();
               });
 
               el.placedList.appendChild(card);
@@ -2053,6 +2463,7 @@
                 card.classList.remove("is-dragging");
                 clearDockDropTargets();
                 el.ghostPreview.classList.add("hidden");
+                scheduleFlushPendingRealtime();
               });
 
               el.backlogList.appendChild(card);
@@ -2571,6 +2982,28 @@
         window.removeEventListener("pointercancel", onCancel);
       };
 
+      const clearCascadePreview = () => {
+        el.eventsLayer?.querySelectorAll(".event-block.is-cascade-preview").forEach((node) => {
+          node.classList.remove("is-cascade-preview");
+        });
+      };
+
+      const updateCascadePreview = (targetStart, targetHasEnd, targetVisualEnd, isLeaving) => {
+        if (!prefs.cascadeMode || ev.type === "reminder" || isLeaving || droppingToDock) {
+          clearCascadePreview();
+          return;
+        }
+        const previewEnd = targetHasEnd
+          ? mode === "move" && origRealDur !== null
+            ? targetStart + origRealDur
+            : targetVisualEnd
+          : null;
+        const affectedIds = new Set(computeCascadePatches(ev, targetStart, previewEnd).map((c) => c.id));
+        el.eventsLayer?.querySelectorAll(".event-block[data-id]").forEach((node) => {
+          node.classList.toggle("is-cascade-preview", affectedIds.has(node.dataset.id));
+        });
+      };
+
       const onMove = (moveEvent) => {
         const dy = moveEvent.clientY - startClientY;
         const dx = Math.abs(moveEvent.clientX - startClientX);
@@ -2583,6 +3016,7 @@
         const earlyStartMin = getEarlyStartMin();
         const earlyEndMin = getEarlyEndMin();
         const minBound = getTimelineMinBound();
+        let leavingTimeline = false;
 
         if (mode === "move") {
           const { dockDropTarget, isLeavingTimeline } = syncDockDragState(
@@ -2593,6 +3027,7 @@
             moveEvent.clientY
           );
           droppingToDock = dockDropTarget;
+          leavingTimeline = isLeavingTimeline;
 
           if (isLeavingTimeline) {
             previewStart = origStart;
@@ -2635,59 +3070,67 @@
             ? `${minToTimeStr(previewStart)} - ${minToTimeStr(previewVisualEnd)} (${previewVisualEnd - previewStart}분)`
             : minToTimeStr(previewStart);
         }
+        updateCascadePreview(previewStart, previewHasEnd, previewVisualEnd, leavingTimeline);
       };
 
       const onCancel = () => {
         activePointerDrag = false;
         cleanupListeners();
         block.classList.remove("is-dragging");
+        clearCascadePreview();
         clearDockDragState(block, dockGhostRef);
         if (hasMoved) renderEvents();
+        scheduleFlushPendingRealtime();
       };
 
       const onUp = async () => {
         activePointerDrag = false;
         cleanupListeners();
         block.classList.remove("is-dragging");
+        clearCascadePreview();
         clearDockDragState(block, dockGhostRef);
 
-        if (!hasMoved) {
-          if (isTouch && mode === "move") {
-            openEventModal(ev.id);
+        try {
+          if (!hasMoved) {
+            if (isTouch && mode === "move") {
+              openEventModal(ev.id);
+            } else {
+              renderEvents();
+            }
+            return;
+          }
+
+          if (droppingToDock === "backlog") {
+            await moveItemBetweenDayAndBacklog(ev, null);
+            return;
+          }
+          if (droppingToDock) {
+            await commitScheduleTimeChange(ev, null, null, {
+              customStartIso: null,
+              customEndIso: null
+            });
+            showToast("시간 미정 목록으로 옮겼습니다.", "📥");
+            return;
+          }
+
+          const finalEndOrNull = previewHasEnd
+            ? mode === "move" && origRealDur !== null
+              ? previewStart + origRealDur
+              : previewVisualEnd
+            : null;
+
+          const changed =
+            previewStart !== origStart ||
+            previewHasEnd !== origHasEnd ||
+            (origHasEnd && finalEndOrNull !== ev.endMin);
+
+          if (changed) {
+            await commitScheduleTimeChange(ev, previewStart, finalEndOrNull);
           } else {
             renderEvents();
           }
-          return;
-        }
-
-        if (droppingToDock === "backlog") {
-          await moveItemBetweenDayAndBacklog(ev, null);
-          return;
-        }
-        if (droppingToDock) {
-          await commitScheduleTimeChange(ev, null, null, {
-            customStartIso: null,
-            customEndIso: null
-          });
-          showToast("시간 미정 목록으로 옮겼습니다.", "📥");
-          return;
-        }
-
-        const finalEndOrNull = previewHasEnd
-          ? mode === "move" && origRealDur !== null
-            ? previewStart + origRealDur
-            : previewVisualEnd
-          : null;
-
-        const changed =
-          previewStart !== origStart ||
-          previewHasEnd !== origHasEnd ||
-          (origHasEnd && finalEndOrNull !== ev.endMin);
-
-        if (changed) {
-          await commitScheduleTimeChange(ev, previewStart, finalEndOrNull);
-        } else {
-          renderEvents();
+        } finally {
+          scheduleFlushPendingRealtime();
         }
       };
 
@@ -2962,6 +3405,8 @@
         }
       } catch (err) {
         showToast(`배치 실패: ${err.message}`);
+      } finally {
+        scheduleFlushPendingRealtime();
       }
     });
 
@@ -3005,6 +3450,8 @@
         await onDropPayload(payload);
       } catch (err) {
         showToast(`이동 실패: ${err.message}`);
+      } finally {
+        scheduleFlushPendingRealtime();
       }
     });
   }
@@ -3418,6 +3865,7 @@
       card.addEventListener("dragend", () => {
         activeHtmlDragPayload = null;
         el.ghostPreview.classList.add("hidden");
+        scheduleFlushPendingRealtime();
       });
 
       el.youtubeList.appendChild(card);
@@ -3495,8 +3943,12 @@
               : Math.min(1440, pickedStart + getDefaultDurationMin());
 
         el.eventModal.classList.add("hidden");
-        await commitScheduleTimeChange(item, pickedStart, finalEnd);
-        showToast(`${minToTimeStr(pickedStart)}에 "${item.title}" 배치됨`, "📥");
+        try {
+          await commitScheduleTimeChange(item, pickedStart, finalEnd);
+          showToast(`${minToTimeStr(pickedStart)}에 "${item.title}" 배치됨`, "📥");
+        } finally {
+          scheduleFlushPendingRealtime();
+        }
       });
       el.modalUntimedChips.appendChild(chip);
     }
@@ -3638,7 +4090,8 @@
 
   function updateAuthGateVisibility() {
     if (!el.authGate) return;
-    const shouldShowGate = !supabaseSession;
+    const isLocalMode = PlannerAPI.getSettings().mode === "local";
+    const shouldShowGate = !isLocalMode && !supabaseSession;
     el.authGate.classList.toggle("hidden", !shouldShowGate);
     if (shouldShowGate && el.authGateEmail && !el.authGateEmail.value) {
       setTimeout(() => el.authGateEmail?.focus(), 40);
@@ -4070,9 +4523,10 @@
           await loadAndRenderRoutines();
           showToast(`루틴 '${title}'을(를) 수정했습니다. (이후 날짜부터 반영)`, "✏️");
         } else {
+          const routineType = el.routineType?.value || "schedule";
           await PlannerAPI.createRoutineTemplate({
             title,
-            type: el.routineType?.value || "schedule",
+            type: routineType,
             start_time: startTime,
             duration_min: durationMin,
             weekdays,
@@ -4080,10 +4534,24 @@
           });
           resetRoutineForm();
           await loadAndRenderRoutines();
-          const applied = await PlannerAPI.applyRoutinesForDate(currentDate);
+          const todayKst = PlannerAPI.todayKst();
+          const routineStartMin = PlannerAPI.hhmmToMinutes(startTime);
+          const includesCurrentWeekday = weekdays.includes(PlannerAPI.getKstWeekday(currentDate));
+          const isPastToday =
+            currentDate === todayKst &&
+            includesCurrentWeekday &&
+            routineStartMin !== null &&
+            routineStartMin < getNowKstMinutes();
+
+          const applied = await PlannerAPI.applyRoutinesForDate(currentDate, { includePast: false });
           if (applied > 0) {
             await loadDay(currentDate, false);
             showToast(`루틴 '${title}'을(를) 추가하고 현재 날짜에도 바로 반영했습니다.`, "🔁");
+          } else if (isPastToday) {
+            showToast(
+              `루틴 '${title}'을(를) 추가했습니다. 오늘(${startTime})은 이미 지나 내일부터 적용됩니다.`,
+              "🔁"
+            );
           } else {
             showToast(`루틴 '${title}'을(를) 추가했습니다.`, "🔁");
           }
@@ -4095,7 +4563,15 @@
 
     el.applyRoutinesNowBtn?.addEventListener("click", async () => {
       try {
-        const added = await PlannerAPI.applyRoutinesForDate(currentDate);
+        let added = await PlannerAPI.applyRoutinesForDate(currentDate, { includePast: false });
+        if (added === 0 && currentDate === PlannerAPI.todayKst()) {
+          const includePast = window.confirm(
+            "현재 시각 이후에 새로 반영할 루틴이 없습니다. 이미 지난 시간의 오늘 루틴도 포함해 반영할까요?"
+          );
+          if (includePast) {
+            added = await PlannerAPI.applyRoutinesForDate(currentDate, { includePast: true });
+          }
+        }
         if (added > 0) {
           await loadDay(currentDate, false);
           showToast(`현재 날짜(${currentDate})에 루틴 ${added}건을 반영했습니다.`, "🔁");
@@ -4474,20 +4950,6 @@
     el.editHasEndCheck.addEventListener("change", syncTimeFieldsVisibility);
     el.editType.addEventListener("change", syncTimeFieldsVisibility);
 
-    function applyPatchedRecordToState(record) {
-      if (!record) return;
-      schedules = schedules.filter((s) => s.id !== record.id);
-      backlogItems = backlogItems.filter((b) => b.id !== record.id);
-      if (record.date === null) {
-        backlogItems = PlannerAPI.sortSchedules([...backlogItems, record]);
-      } else if (record.date === currentDate) {
-        schedules = PlannerAPI.sortSchedules([...schedules, record]);
-      }
-      renderAll();
-      syncSwrCacheIfCurrent(currentDate, schedules);
-      syncSwrCacheIfCurrent(null, backlogItems);
-    }
-
     el.eventForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const id = el.editEventId.value;
@@ -4535,19 +4997,18 @@
         memo: el.editMemo.value
       };
 
+      el.eventModal.classList.add("hidden");
       try {
-        el.eventModal.classList.add("hidden");
         if (id) {
           const dateHint = prevEv ? prevEv.date : currentDate;
-          lastUserMutationAt = Date.now();
+          recordLocalMutation(id);
           const updated = await PlannerAPI.patchSchedule(id, payload, dateHint);
+          recordLocalMutation(id);
+          markSyncedNow();
           if (updated && (updated.date === null || updated.date === currentDate)) {
-            applyPatchedRecordToState(updated);
+            upsertRecordInState(updated, { prevDate: dateHint, render: true, syncCache: true });
           } else if (dateVal) {
-            schedules = schedules.filter((s) => s.id !== id);
-            backlogItems = backlogItems.filter((b) => b.id !== id);
-            syncSwrCacheIfCurrent(currentDate, schedules);
-            syncSwrCacheIfCurrent(null, backlogItems);
+            removeRecordFromState(id, dateHint, { render: false, syncCache: true });
             await loadDay(dateVal, false);
           }
           let editUndoEntry = null;
@@ -4562,15 +5023,14 @@
               memo: prevEv.memo || ""
             };
             editUndoEntry = pushUndoAction(`'${prevEv.title}' 수정`, async () => {
-              lastUserMutationAt = Date.now();
+              recordLocalMutation(id);
               const reverted = await PlannerAPI.patchSchedule(id, snapPatch, payload.date);
+              recordLocalMutation(id);
+              markSyncedNow();
               if (reverted && (reverted.date === null || reverted.date === currentDate)) {
-                applyPatchedRecordToState(reverted);
+                upsertRecordInState(reverted, { prevDate: payload.date, render: true, syncCache: true });
               } else if (snapPatch.date) {
-                schedules = schedules.filter((s) => s.id !== id);
-                backlogItems = backlogItems.filter((b) => b.id !== id);
-                syncSwrCacheIfCurrent(currentDate, schedules);
-                syncSwrCacheIfCurrent(null, backlogItems);
+                removeRecordFromState(id, payload.date, { render: false, syncCache: true });
                 await loadDay(snapPatch.date, false);
               }
             });
@@ -4587,6 +5047,8 @@
         }
       } catch (err) {
         showToast(`저장 실패: ${err.message}`, "⚠️");
+      } finally {
+        scheduleFlushPendingRealtime();
       }
     });
 
@@ -4595,7 +5057,11 @@
       if (!id) return;
       const target = findItemById(id);
       el.eventModal.classList.add("hidden");
-      await deleteScheduleById(id, { targetDate: target ? target.date ?? null : undefined });
+      try {
+        await deleteScheduleById(id, { targetDate: target ? target.date ?? null : undefined });
+      } finally {
+        scheduleFlushPendingRealtime();
+      }
     });
 
     // 빠른 블록 프리셋 편집 & 통합 설정 모달 열기
@@ -4734,13 +5200,22 @@
     // 모달 닫기
     document.querySelectorAll("[data-close]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        document.getElementById(btn.dataset.close)?.classList.add("hidden");
+        const targetId = btn.dataset.close;
+        document.getElementById(targetId)?.classList.add("hidden");
+        if (targetId === "eventModal") {
+          scheduleFlushPendingRealtime();
+        }
       });
     });
 
     document.querySelectorAll(".modal-backdrop").forEach((bd) => {
       bd.addEventListener("click", (e) => {
-        if (e.target === bd) bd.classList.add("hidden");
+        if (e.target === bd) {
+          bd.classList.add("hidden");
+          if (bd === el.eventModal) {
+            scheduleFlushPendingRealtime();
+          }
+        }
       });
     });
 
@@ -4757,7 +5232,11 @@
       if (e.key === "Escape") {
         setIslandExpanded(false);
         clearTouchDraftSlot();
+        const wasEventModalOpen = el.eventModal && !el.eventModal.classList.contains("hidden");
         document.querySelectorAll(".modal-backdrop").forEach((m) => m.classList.add("hidden"));
+        if (wasEventModalOpen) {
+          scheduleFlushPendingRealtime();
+        }
         return;
       }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedEventId && !isEditingText) {
@@ -4786,38 +5265,58 @@
   }
 
   (async function bootstrap() {
-    try {
-      supabaseSession = await PlannerAPI.getSupabaseSession();
-      const sb = await PlannerAPI.getSupabaseClient().catch(() => null);
-      if (sb) {
-        sb.auth.onAuthStateChange((event, session) => {
-          const prevUserId = supabaseSession?.user?.id || null;
-          const nextUserId = session?.user?.id || null;
-          supabaseSession = session || null;
-          updateApiBadge();
-          updateSupabaseAuthUi();
-          if (supabaseSession) {
-            if (event === "SIGNED_IN" || event === "INITIAL_SESSION" || prevUserId !== nextUserId) {
-              setupRealtimeSync(prevUserId !== nextUserId);
-              syncCloudPrefs();
+    const settings = PlannerAPI.getSettings();
+    if (settings.mode === "supabase") {
+      try {
+        supabaseSession = await PlannerAPI.getSupabaseSession();
+        const sb = await PlannerAPI.getSupabaseClient().catch(() => null);
+        if (sb) {
+          sb.auth.onAuthStateChange((event, session) => {
+            const prevUserId = supabaseSession?.user?.id || null;
+            const nextUserId = session?.user?.id || null;
+            supabaseSession = session || null;
+            updateApiBadge();
+            updateSupabaseAuthUi();
+            if (supabaseSession) {
+              if (event === "SIGNED_IN" || event === "INITIAL_SESSION" || prevUserId !== nextUserId) {
+                setupRealtimeSync(prevUserId !== nextUserId);
+                syncCloudPrefs();
+              }
+            } else {
+              disconnectRealtime();
             }
-          } else {
-            disconnectRealtime();
-          }
-        });
+          });
+        }
+      } catch {
+        supabaseSession = null;
       }
-    } catch {
+    } else {
       supabaseSession = null;
     }
 
     updateSupabaseAuthUi();
-    if (supabaseSession) {
+    if (settings.mode === "local") {
+      await loadDay(currentDate);
+    } else if (supabaseSession) {
       await Promise.all([loadDay(currentDate), syncCloudPrefs()]);
     } else {
       updateApiBadge();
     }
     setupRealtimeSync();
   })();
+
+  window.addEventListener("online", () => {
+    isNetworkOnline = true;
+    updateApiBadge();
+    setupRealtimeSync(true);
+    syncIfChanged(true, { force: true });
+  });
+
+  window.addEventListener("offline", () => {
+    isNetworkOnline = false;
+    realtimeConnected = false;
+    updateApiBadge();
+  });
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
@@ -4841,8 +5340,8 @@
     checkBrowserNotifications();
 
     const now = Date.now();
-    const pollInterval = realtimeConnected ? 15000 : 5000;
-    if (now - lastIntervalPollAt >= pollInterval) {
+    // 실시간 연결 중에는 폴링하지 않고, 연결 끊김 상태일 때만 백업 폴링 수행
+    if (!realtimeConnected && now - lastIntervalPollAt >= 5000) {
       lastIntervalPollAt = now;
       syncIfChanged(true);
     }

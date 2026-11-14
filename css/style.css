@@ -949,14 +949,32 @@ html[data-theme="light"] .action-btn {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 .source-dot.local { background: #64748b; }
-.source-dot.agent { background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, 0.55); }
-.source-dot.agent.realtime {
+.source-dot.online { background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, 0.55); }
+.source-dot.online.realtime {
   background: #10b981;
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.22), 0 0 10px rgba(16, 185, 129, 0.7);
 }
-.source-dot.agent-warn { background: #f59e0b; }
+.source-dot.disconnected,
+.source-dot.warn { background: #f59e0b; }
+.source-dot.offline {
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+
+.api-sync-time {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-left: 1px solid var(--border);
+  padding-left: 6px;
+}
+
+.api-sync-time:empty {
+  display: none;
+}
 
 /* 3단 워크스페이스 그리드 */
 .workspace-grid {
@@ -1869,6 +1887,12 @@ html[data-theme="light"] .event-block.is-selected {
   opacity: 0.94;
   cursor: grabbing;
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
+}
+
+.event-block.is-cascade-preview {
+  outline: 1.5px dashed #f59e0b;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
 }
 
 .event-block.type-schedule {
@@ -3980,7 +4004,8 @@ html[data-theme="light"] .modal-backdrop {
     padding: 0;
     justify-content: center;
   }
-  .api-pill #apiSourceLabel {
+  .api-pill #apiSourceLabel,
+  .api-pill .api-sync-time {
     display: none;
   }
   .control-pill input[type="range"] {

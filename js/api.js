@@ -1,18 +1,18 @@
 /**
  * Muse Elastic Planner - 일정 API & 로컬 스토리지 어댑터
  *
- * - agent : Supabase Edge Function (`agent-api`) /v1/schedules REST 연동
- *           API 주소와 Bearer 토큰은 소스 코드에 하드코딩하지 않고
- *           브라우저 localStorage 또는 gitignore 된 js/config.local.js 에서 읽어옵니다.
- * - local : 서버 연결 전 미리보기/오프라인용 브라우저 localStorage 저장
+ * - supabase : Supabase Auth + PostgREST (`schedules`, `routine_templates`) 실시간 연동
+ * - local    : 오프라인/테스트용 브라우저 localStorage 저장
  */
 
 (function (global) {
   const SETTINGS_KEY = "muse_planner_api_settings_v2";
   const DAY_STORAGE_PREFIX = "muse_planner_schedules_day_v2_";
   const BACKLOG_STORAGE_KEY = "muse_planner_backlog_v1";
-  const AGENT_CACHE_PREFIX = "muse_planner_agent_cache_v2_";
-  const AGENT_BACKLOG_CACHE_KEY = "muse_planner_agent_backlog_cache_v1";
+  const SCHEDULE_CACHE_PREFIX = "muse_planner_cache_day_v3_";
+  const BACKLOG_CACHE_KEY = "muse_planner_cache_backlog_v2";
+  const LEGACY_CACHE_PREFIX = "muse_planner_agent_cache_v2_";
+  const LEGACY_BACKLOG_CACHE_KEY = "muse_planner_agent_backlog_cache_v1";
   const WIDGETS_STORAGE_PREFIX = "muse_planner_widgets_v2_";
   const PREFS_KEY = "muse_planner_ui_prefs_v2";
   const ROUTINE_TEMPLATES_KEY = "muse_planner_routine_templates_v2";
@@ -26,10 +26,8 @@
     "id, date, start_at, end_at, title, type, done, done_at, source, memo, template_id, created_at, updated_at";
 
   const DEFAULT_SETTINGS = {
-    mode: "supabase", // 'supabase' | 'agent' | 'local'
-    localExplicit: false,
-    agentApiUrl: "",
-    agentApiToken: ""
+    mode: "supabase", // 'supabase' | 'local'
+    localExplicit: false
   };
 
   const DEFAULT_PREFS = {
@@ -64,18 +62,6 @@
       { id: "pre_break", icon: "☕", title: "휴식/정리", durationMin: 15, type: "schedule" }
     ]
   };
-
-  const TEST_SEED_2026_11_14 = [
-    { start: "11:30", end: "12:00", title: "점심 준비 + KT VVIP 사용", type: "task", source: "app", memo: "" },
-    { start: "12:00", end: "13:00", title: "점심", type: "schedule", source: "app", memo: "" },
-    { start: "13:00", end: "14:00", title: "홈트 토요일 루틴", type: "schedule", source: "app", memo: "" },
-    { start: "14:00", end: "14:30", title: "샤워하고 쉬기", type: "schedule", source: "app", memo: "" },
-    { start: "14:30", end: "15:30", title: "방 정리 (속초 짐 풀기 포함)", type: "task", source: "app", memo: "" },
-    { start: "15:30", end: "17:30", title: "자유 시간", type: "schedule", source: "app", memo: "" },
-    { start: "19:38", end: null, title: "갤럭시 스토어 출석체크", type: "reminder", source: "app", memo: "" },
-    { start: "21:38", end: null, title: "ZZZ 리딤 코드 확인", type: "reminder", source: "app", memo: "" },
-    { start: "23:00", end: null, title: "취침 준비", type: "schedule", source: "app", memo: "" }
-  ];
 
   function uid(prefix = "local") {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -164,6 +150,17 @@
   /* -------------------- 설정 & 환경변수 분리 로드 -------------------- */
 
   function getSettings() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.mode === "local" && parsed.localExplicit === true) {
+          return { mode: "local", localExplicit: true };
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
     return {
       ...DEFAULT_SETTINGS,
       mode: "supabase"
@@ -171,92 +168,13 @@
   }
 
   function saveSettings(next) {
-    const mode = ["supabase", "agent", "local"].includes(next.mode) ? next.mode : "supabase";
+    const mode = next?.mode === "local" ? "local" : "supabase";
     const merged = {
-      ...DEFAULT_SETTINGS,
-      ...next,
       mode,
-      localExplicit: mode === "local" ? Boolean(next.localExplicit) : false,
-      agentApiUrl: String(next.agentApiUrl || "").trim().replace(/\/+$/, ""),
-      agentApiToken: String(next.agentApiToken || "").trim()
+      localExplicit: mode === "local" ? Boolean(next?.localExplicit) : false
     };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
     return merged;
-  }
-
-  function encodeBase64Url(str) {
-    const bytes = new TextEncoder().encode(str);
-    let bin = "";
-    for (let i = 0; i < bytes.length; i += 1) {
-      bin += String.fromCharCode(bytes[i]);
-    }
-    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-
-  function decodeBase64Url(b64u) {
-    const norm = String(b64u || "").replace(/-/g, "+").replace(/_/g, "/");
-    const padded = norm + "=".repeat((4 - (norm.length % 4)) % 4);
-    const bin = atob(padded);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i += 1) {
-      bytes[i] = bin.charCodeAt(i);
-    }
-    return new TextDecoder().decode(bytes);
-  }
-
-  function applyHashConnection() {
-    const hash = global.location?.hash || "";
-    if (!hash || hash.length < 2) return { applied: false };
-
-    let api = "";
-    let token = "";
-    try {
-      const params = new URLSearchParams(hash.slice(1));
-      const connectParam = params.get("connect");
-      if (connectParam) {
-        const parsed = JSON.parse(decodeBase64Url(connectParam));
-        if (parsed && typeof parsed === "object") {
-          api = String(parsed.api || parsed.url || parsed.u || "").trim();
-          token = String(parsed.token || parsed.t || "").trim();
-        }
-      } else if (params.has("api") || params.has("token")) {
-        api = String(params.get("api") || "").trim();
-        token = String(params.get("token") || "").trim();
-      }
-    } catch {
-      return { applied: false };
-    }
-
-    if (!/^https?:\/\/.+/i.test(api) || !token) {
-      return { applied: false };
-    }
-
-    saveSettings({
-      mode: "agent",
-      agentApiUrl: api,
-      agentApiToken: token
-    });
-
-    try {
-      const cleanUrl = `${global.location.pathname || "/"}${global.location.search || ""}`;
-      global.history?.replaceState?.(null, "", cleanUrl);
-    } catch {
-      // ignore history errors
-    }
-
-    return { applied: true, api };
-  }
-
-  function buildConnectUrl(customUrl, customToken) {
-    const s = getSettings();
-    const api = String(customUrl !== undefined ? customUrl : s.agentApiUrl || "").trim().replace(/\/+$/, "");
-    const token = String(customToken !== undefined ? customToken : s.agentApiToken || "").trim();
-    if (!/^https?:\/\/.+/i.test(api) || !token) {
-      return null;
-    }
-    const base = `${global.location.origin}${global.location.pathname}`;
-    const encoded = encodeBase64Url(JSON.stringify({ api, token }));
-    return `${base}#connect=${encoded}`;
   }
 
   let cloudPrefsSyncTimer = null;
@@ -476,28 +394,6 @@
 
   /* -------------------- 로컬 데모 / 오프라인 저장소 -------------------- */
 
-  function buildSeedSchedules(dateStr) {
-    return TEST_SEED_2026_11_14.map((item, idx) => {
-      const startMin = hhmmToMinutes(item.start);
-      const endMin = item.end ? hhmmToMinutes(item.end) : null;
-      return normalizeScheduleRecord(
-        {
-          id: uid(`seed${idx}`),
-          date: dateStr,
-          start_at: kstMinutesToIso(dateStr, startMin),
-          end_at: endMin !== null ? kstMinutesToIso(dateStr, endMin) : null,
-          title: item.title,
-          type: item.type,
-          done: false,
-          done_at: null,
-          source: item.source,
-          memo: item.memo
-        },
-        dateStr
-      );
-    });
-  }
-
   function loadLocalSchedules(dateStr) {
     const key = DAY_STORAGE_PREFIX + dateStr;
     try {
@@ -511,13 +407,6 @@
     } catch {
       // fall through
     }
-
-    if (dateStr === "2026-11-14" || dateStr === todayKst()) {
-      const seeded = sortSchedules(buildSeedSchedules(dateStr));
-      saveLocalSchedules(dateStr, seeded);
-      return seeded;
-    }
-
     return [];
   }
 
@@ -540,12 +429,6 @@
 
   function saveLocalBacklog(items) {
     localStorage.setItem(BACKLOG_STORAGE_KEY, JSON.stringify(sortSchedules(items)));
-  }
-
-  function resetLocalSeed(dateStr) {
-    const seeded = sortSchedules(buildSeedSchedules(dateStr));
-    saveLocalSchedules(dateStr, seeded);
-    return seeded;
   }
 
   /* -------------------- 우측 보조 위젯 (로컬 저장) -------------------- */
@@ -592,60 +475,30 @@
     );
   }
 
-  /* -------------------- Agent API REST 호출 (/v1/schedules) -------------------- */
+  /* -------------------- 통합 SWR 로컬 캐시 관리 -------------------- */
 
-  function assertAgentConfig(settings) {
-    if (!settings.agentApiUrl) {
-      throw new Error("API 주소가 비어 있습니다. 우측 상단 설정에서 Agent API URL을 입력해 주세요.");
-    }
-    if (!settings.agentApiToken) {
-      throw new Error("인증 토큰이 비어 있습니다. 우측 상단 설정에서 Bearer 토큰을 입력해 주세요.");
-    }
-  }
-
-  async function requestAgentApi(settings, pathWithQuery, options = {}) {
-    assertAgentConfig(settings);
-    const url = `${settings.agentApiUrl}${pathWithQuery}`;
-    const headers = {
-      Authorization: `Bearer ${settings.agentApiToken}`,
-      ...(options.body ? { "Content-Type": "application/json" } : {})
-    };
-
-    const res = await fetch(url, {
-      method: options.method || "GET",
-      headers,
-      cache: "no-store",
-      body: options.body ? JSON.stringify(options.body) : undefined
-    });
-
-    if (res.status === 401) {
-      throw new Error("인증 실패 (401): API Bearer 토큰을 다시 확인해 주세요.");
-    }
-
-    if (res.status === 204) {
-      return null;
-    }
-
-    const text = await res.text();
-    let json = null;
+  function cleanupLegacyCaches() {
     try {
-      json = text ? JSON.parse(text) : null;
+      const toRemove = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (k === LEGACY_BACKLOG_CACHE_KEY || k.startsWith(LEGACY_CACHE_PREFIX)) {
+          toRemove.push(k);
+        }
+      }
+      toRemove.forEach((k) => localStorage.removeItem(k));
     } catch {
-      json = null;
+      // ignore storage errors
     }
-
-    if (!res.ok) {
-      const msg = json?.error?.message || `API 오류 (${res.status})`;
-      throw new Error(msg);
-    }
-
-    return json;
   }
+
+  cleanupLegacyCaches();
 
   function getCachedSchedules(dateStr) {
     if (!dateStr) return null;
     try {
-      const raw = localStorage.getItem(AGENT_CACHE_PREFIX + dateStr);
+      const raw = localStorage.getItem(SCHEDULE_CACHE_PREFIX + dateStr);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return null;
@@ -658,7 +511,7 @@
   function setCachedSchedules(dateStr, items) {
     if (!dateStr || !Array.isArray(items)) return;
     try {
-      localStorage.setItem(AGENT_CACHE_PREFIX + dateStr, JSON.stringify(sortSchedules(items)));
+      localStorage.setItem(SCHEDULE_CACHE_PREFIX + dateStr, JSON.stringify(sortSchedules(items)));
     } catch {
       // ignore quota errors
     }
@@ -666,16 +519,12 @@
 
   function clearCachedSchedules(dateStr) {
     if (!dateStr) return;
-    try {
-      localStorage.removeItem(AGENT_CACHE_PREFIX + dateStr);
-    } catch {
-      // ignore storage errors
-    }
+    invalidateScheduleCache(dateStr);
   }
 
   function getCachedBacklog() {
     try {
-      const raw = localStorage.getItem(AGENT_BACKLOG_CACHE_KEY);
+      const raw = localStorage.getItem(BACKLOG_CACHE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return null;
@@ -688,18 +537,79 @@
   function setCachedBacklog(items) {
     if (!Array.isArray(items)) return;
     try {
-      localStorage.setItem(AGENT_BACKLOG_CACHE_KEY, JSON.stringify(sortSchedules(items)));
+      localStorage.setItem(BACKLOG_CACHE_KEY, JSON.stringify(sortSchedules(items)));
     } catch {
       // ignore quota errors
     }
   }
 
-  async function fetchRealtimeConfig() {
-    const settings = getSettings();
-    if (settings.mode !== "agent" || !settings.agentApiUrl || !settings.agentApiToken) {
-      return { enabled: false };
+  function invalidateScheduleCache(target = "all") {
+    try {
+      if (target === "all") {
+        localStorage.removeItem(BACKLOG_CACHE_KEY);
+        const toRemove = [];
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(SCHEDULE_CACHE_PREFIX)) toRemove.push(k);
+        }
+        toRemove.forEach((k) => localStorage.removeItem(k));
+        return;
+      }
+      if (target === null || target === "backlog") {
+        localStorage.removeItem(BACKLOG_CACHE_KEY);
+        return;
+      }
+      if (typeof target === "string" && target) {
+        localStorage.removeItem(SCHEDULE_CACHE_PREFIX + target);
+      }
+    } catch {
+      // ignore storage errors
     }
-    return requestAgentApi(settings, "/v1/realtime-config");
+  }
+
+  function syncCacheForRecord(normalized, prevDate = undefined) {
+    if (!normalized) return;
+    if (prevDate === undefined) {
+      // 이전 날짜를 모르면 다른 날짜 캐시에 동일 id가 남아 있지 않도록 정리
+      try {
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const k = localStorage.key(i);
+          if (!k || !k.startsWith(SCHEDULE_CACHE_PREFIX)) continue;
+          const d = k.slice(SCHEDULE_CACHE_PREFIX.length);
+          if (d !== normalized.date) {
+            const list = getCachedSchedules(d);
+            if (list && list.some((item) => item.id === normalized.id)) {
+              setCachedSchedules(d, list.filter((item) => item.id !== normalized.id));
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    } else if (typeof prevDate === "string" && prevDate && prevDate !== normalized.date) {
+      const oldCached = getCachedSchedules(prevDate);
+      if (oldCached) {
+        setCachedSchedules(prevDate, oldCached.filter((item) => item.id !== normalized.id));
+      }
+    }
+
+    if (normalized.date === null) {
+      const cachedBacklog = getCachedBacklog();
+      if (cachedBacklog) {
+        setCachedBacklog([...cachedBacklog.filter((item) => item.id !== normalized.id), normalized]);
+      }
+    } else {
+      const cachedDay = getCachedSchedules(normalized.date);
+      if (cachedDay) {
+        setCachedSchedules(normalized.date, [...cachedDay.filter((item) => item.id !== normalized.id), normalized]);
+      }
+      if (prevDate === null || prevDate === undefined) {
+        const cachedBacklog = getCachedBacklog();
+        if (cachedBacklog && cachedBacklog.some((item) => item.id === normalized.id)) {
+          setCachedBacklog(cachedBacklog.filter((item) => item.id !== normalized.id));
+        }
+      }
+    }
   }
 
   /* -------------------- Supabase Auth & DB 어댑터 -------------------- */
@@ -755,36 +665,6 @@
     return session;
   }
 
-  function updateCachedAfterPatch(normalized, dateHint) {
-    const cacheDates = new Set([dateHint, normalized.date].filter(Boolean));
-    for (const d of cacheDates) {
-      const cached = getCachedSchedules(d);
-      if (!cached) continue;
-      if (d === normalized.date) {
-        const exists = cached.some((item) => item.id === normalized.id);
-        const next = exists
-          ? cached.map((item) => (item.id === normalized.id ? normalized : item))
-          : [...cached, normalized];
-        setCachedSchedules(d, next);
-      } else {
-        setCachedSchedules(d, cached.filter((item) => item.id !== normalized.id));
-      }
-    }
-
-    const cachedBacklog = getCachedBacklog();
-    if (cachedBacklog) {
-      if (normalized.date === null) {
-        const exists = cachedBacklog.some((item) => item.id === normalized.id);
-        const next = exists
-          ? cachedBacklog.map((item) => (item.id === normalized.id ? normalized : item))
-          : [...cachedBacklog, normalized];
-        setCachedBacklog(next);
-      } else {
-        setCachedBacklog(cachedBacklog.filter((item) => item.id !== normalized.id));
-      }
-    }
-  }
-
   async function fetchSchedules(dateStr, options = {}) {
     const { applyRoutines = true } = options;
     const settings = getSettings();
@@ -811,14 +691,6 @@
       setCachedSchedules(dateStr, normalized);
       return normalized;
     }
-    if (settings.mode === "agent") {
-      const rows = await requestAgentApi(settings, `/v1/schedules?date=${encodeURIComponent(dateStr)}`);
-      const normalized = sortSchedules(
-        (Array.isArray(rows) ? rows : []).map((r) => normalizeScheduleRecord(r, dateStr))
-      );
-      setCachedSchedules(dateStr, normalized);
-      return normalized;
-    }
     if (applyRoutines) {
       applyLocalRoutinesForDate(dateStr);
     }
@@ -840,13 +712,6 @@
         .order("created_at", { ascending: true });
       if (error) throw new Error(error.message);
       return sortSchedules((Array.isArray(data) ? data : []).map((r) => normalizeScheduleRecord(r, r.date)));
-    }
-    if (settings.mode === "agent") {
-      const rows = await requestAgentApi(
-        settings,
-        `/v1/schedules?from=${encodeURIComponent(fromStr)}&to=${encodeURIComponent(toStr)}`
-      );
-      return sortSchedules((Array.isArray(rows) ? rows : []).map((r) => normalizeScheduleRecord(r, r.date)));
     }
     const items = [];
     let cursor = fromStr;
@@ -876,44 +741,37 @@
       setCachedBacklog(normalized);
       return normalized;
     }
-    if (settings.mode === "agent") {
-      const rows = await requestAgentApi(settings, "/v1/backlog");
-      const normalized = sortSchedules(
-        (Array.isArray(rows) ? rows : []).map((r) => normalizeScheduleRecord(r, null))
-      );
-      setCachedBacklog(normalized);
-      return normalized;
-    }
     return loadLocalBacklog();
   }
 
-  function appendToCacheAfterCreate(normalized) {
-    if (normalized.date === null) {
-      const cached = getCachedBacklog();
-      if (cached) {
-        setCachedBacklog([...cached.filter((x) => x.id !== normalized.id), normalized]);
-      }
-      return;
-    }
-    const cached = getCachedSchedules(normalized.date);
-    if (cached) {
-      setCachedSchedules(normalized.date, [...cached.filter((x) => x.id !== normalized.id), normalized]);
-    }
-  }
-
-  function removeFromCacheAfterDelete(id, dateHint) {
+  function removeFromCacheAfterDelete(id, dateHint = undefined) {
+    if (!id) return;
     if (dateHint === null) {
       const cached = getCachedBacklog();
-      if (cached) {
-        setCachedBacklog(cached.filter((item) => item.id !== id));
-      }
+      if (cached) setCachedBacklog(cached.filter((item) => item.id !== id));
       return;
     }
-    if (dateHint) {
+    if (typeof dateHint === "string" && dateHint) {
       const cached = getCachedSchedules(dateHint);
-      if (cached) {
-        setCachedSchedules(dateHint, cached.filter((item) => item.id !== id));
+      if (cached) setCachedSchedules(dateHint, cached.filter((item) => item.id !== id));
+      return;
+    }
+    const cachedBacklog = getCachedBacklog();
+    if (cachedBacklog) {
+      setCachedBacklog(cachedBacklog.filter((item) => item.id !== id));
+    }
+    try {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(SCHEDULE_CACHE_PREFIX)) continue;
+        const d = k.slice(SCHEDULE_CACHE_PREFIX.length);
+        const list = getCachedSchedules(d);
+        if (list && list.some((item) => item.id === id)) {
+          setCachedSchedules(d, list.filter((item) => item.id !== id));
+        }
       }
+    } catch {
+      // ignore
     }
   }
 
@@ -942,21 +800,7 @@
         .single();
       if (error) throw new Error(error.message);
       const normalized = normalizeScheduleRecord(data, targetDate);
-      appendToCacheAfterCreate(normalized);
-      return normalized;
-    }
-    if (settings.mode === "agent") {
-      const created = await requestAgentApi(settings, "/v1/schedules", {
-        method: "POST",
-        body: {
-          ...payload,
-          date: targetDate,
-          start_at: isBacklog ? null : payload.start_at ?? null,
-          end_at: isBacklog ? null : payload.end_at ?? null
-        }
-      });
-      const normalized = normalizeScheduleRecord(created, targetDate);
-      appendToCacheAfterCreate(normalized);
+      syncCacheForRecord(normalized, targetDate);
       return normalized;
     }
 
@@ -1003,16 +847,7 @@
         .single();
       if (error) throw new Error(error.message);
       const normalized = normalizeScheduleRecord(data, "date" in updates ? updates.date : dateHint);
-      updateCachedAfterPatch(normalized, dateHint);
-      return normalized;
-    }
-    if (settings.mode === "agent") {
-      const updated = await requestAgentApi(settings, `/v1/schedules/${encodeURIComponent(id)}`, {
-        method: "PATCH",
-        body: patch
-      });
-      const normalized = normalizeScheduleRecord(updated, "date" in patch ? patch.date : dateHint);
-      updateCachedAfterPatch(normalized, dateHint);
+      syncCacheForRecord(normalized, dateHint);
       return normalized;
     }
 
@@ -1070,13 +905,6 @@
       const sb = await getSupabaseClient();
       const { error } = await sb.from("schedules").delete().eq("id", id);
       if (error) throw new Error(error.message);
-      removeFromCacheAfterDelete(id, dateHint);
-      return;
-    }
-    if (settings.mode === "agent") {
-      await requestAgentApi(settings, `/v1/schedules/${encodeURIComponent(id)}`, {
-        method: "DELETE"
-      });
       removeFromCacheAfterDelete(id, dateHint);
       return;
     }
@@ -1166,7 +994,8 @@
     localStorage.setItem(ROUTINE_TEMPLATES_KEY, JSON.stringify(list));
   }
 
-  function applyLocalRoutinesForDate(dateStr) {
+  function applyLocalRoutinesForDate(dateStr, options = {}) {
+    const { includePast = false } = options;
     const templates = loadLocalRoutines().filter((t) => t.enabled);
     if (!templates.length) return 0;
 
@@ -1181,15 +1010,37 @@
 
     const appliedSet = new Set(appliedIds);
     const dow = getKstWeekday(dateStr);
+    const todayStr = todayKst();
+    const nowMin = nowKstMinutes();
     const dayList = loadLocalSchedules(dateStr);
-    let inserted = 0;
+    let updatedCount = 0;
 
     for (const tpl of templates) {
       if (!tpl.weekdays.includes(dow)) continue;
+
+      const startMin = tpl.start_time ? hhmmToMinutes(tpl.start_time) : null;
+      const matchingExisting = dayList.find((item) => {
+        if (String(item.title || "").trim() !== String(tpl.title || "").trim()) return false;
+        if (startMin === null) return !item.hasStartAt;
+        return item.hasStartAt && item.startMin === startMin;
+      });
+
+      if (matchingExisting) {
+        if (matchingExisting.template_id !== tpl.id) {
+          matchingExisting.template_id = tpl.id;
+          updatedCount += 1;
+        }
+        appliedSet.add(tpl.id);
+        continue;
+      }
+
       if (appliedSet.has(tpl.id)) continue;
 
+      if (!includePast && dateStr === todayStr && startMin !== null && startMin < nowMin) {
+        continue;
+      }
+
       appliedSet.add(tpl.id);
-      const startMin = tpl.start_time ? hhmmToMinutes(tpl.start_time) : null;
       const startAt = startMin !== null ? kstMinutesToIso(dateStr, startMin) : null;
       const endAt =
         startMin !== null && tpl.duration_min > 0
@@ -1216,14 +1067,14 @@
           dateStr
         )
       );
-      inserted += 1;
+      updatedCount += 1;
     }
 
     localStorage.setItem(ROUTINE_APPLIED_PREFIX + dateStr, JSON.stringify([...appliedSet]));
-    if (inserted > 0) {
+    if (updatedCount > 0) {
       saveLocalSchedules(dateStr, dayList);
     }
-    return inserted;
+    return updatedCount;
   }
 
   async function fetchRoutineTemplates() {
@@ -1337,50 +1188,25 @@
     saveLocalRoutines(list);
   }
 
-  async function applyRoutinesForDate(dateStr) {
+  async function applyRoutinesForDate(dateStr, options = {}) {
+    const { includePast = false } = options;
     const settings = getSettings();
     if (settings.mode === "supabase") {
       await requireSupabaseSession();
       const sb = await getSupabaseClient();
       const { data, error } = await sb.rpc("apply_routines_for_date", {
-        target_date: dateStr
+        target_date: dateStr,
+        include_past: Boolean(includePast)
       });
       if (error) throw new Error(error.message);
       return Number(data) || 0;
     }
-    return applyLocalRoutinesForDate(dateStr);
-  }
-
-  async function seedTestSchedulesForDate(dateStr = "2026-11-14") {
-    const existing = await fetchSchedules(dateStr);
-    const existingSignatures = new Set(
-      existing.map((ev) => `${ev.title}|${ev.hasStartAt ? minutesToHhmm(ev.startMin) : "none"}`)
-    );
-    let insertedCount = 0;
-
-    for (const item of TEST_SEED_2026_11_14) {
-      const sig = `${item.title}|${item.start}`;
-      if (existingSignatures.has(sig)) continue;
-      const startMin = hhmmToMinutes(item.start);
-      const endMin = item.end ? hhmmToMinutes(item.end) : null;
-      await createSchedule({
-        date: dateStr,
-        start_at: kstMinutesToIso(dateStr, startMin),
-        end_at: endMin !== null ? kstMinutesToIso(dateStr, endMin) : null,
-        title: item.title,
-        type: item.type,
-        source: item.source,
-        memo: item.memo
-      });
-      insertedCount += 1;
-    }
-
-    return { insertedCount, items: await fetchSchedules(dateStr) };
+    return applyLocalRoutinesForDate(dateStr, options);
   }
 
   global.PlannerAPI = {
     KST_TIMEZONE,
-    TEST_SEED_2026_11_14,
+    SCHEDULE_COLUMNS,
     uid,
     todayKst,
     nowKstMinutes,
@@ -1390,8 +1216,6 @@
     minutesToHhmm,
     getSettings,
     saveSettings,
-    applyHashConnection,
-    buildConnectUrl,
     getSupabaseClient,
     getSupabaseSession,
     signInSupabase,
@@ -1401,7 +1225,6 @@
     syncPrefsFromCloud,
     getDefaultPresets,
     resetPrefsToDefault,
-    resetLocalSeed,
     loadWidgetsState,
     saveWidgetsState,
     normalizeScheduleRecord,
@@ -1411,7 +1234,9 @@
     clearCachedSchedules,
     getCachedBacklog,
     setCachedBacklog,
-    fetchRealtimeConfig,
+    invalidateScheduleCache,
+    syncCacheForRecord,
+    removeFromCacheAfterDelete,
     fetchSchedules,
     fetchSchedulesRange,
     fetchBacklog,
@@ -1424,7 +1249,6 @@
     createRoutineTemplate,
     patchRoutineTemplate,
     deleteRoutineTemplate,
-    applyRoutinesForDate,
-    seedTestSchedulesForDate
+    applyRoutinesForDate
   };
 })(typeof window !== "undefined" ? window : globalThis);
