@@ -2743,16 +2743,32 @@
     el.statDoneCount.textContent = `${doneCount}개`;
     el.statRemainingCount.textContent = `${remainCount}개`;
 
-    const countsByType = { schedule: 0, task: 0, reminder: 0 };
+    const todayStr = PlannerAPI.todayKst();
+    const nowMin = getNowKstMinutes();
+    const statsByType = {
+      schedule: { total: 0, done: 0 },
+      task: { total: 0, done: 0 },
+      reminder: { total: 0, done: 0 }
+    };
     for (const s of schedules) {
-      countsByType[s.type] = (countsByType[s.type] || 0) + 1;
+      const bucket = statsByType[s.type];
+      if (!bucket) continue;
+      bucket.total += 1;
+      if (s.type === "reminder") {
+        const passed =
+          s.hasStartAt &&
+          (currentDate < todayStr || (currentDate === todayStr && s.startMin <= nowMin));
+        if (passed) bucket.done += 1;
+      } else if (s.done) {
+        bucket.done += 1;
+      }
     }
 
     el.typeBreakdownBars.innerHTML = "";
     const breakdownFrag = document.createDocumentFragment();
     for (const [key, meta] of Object.entries(TYPE_META)) {
-      const cnt = countsByType[key] || 0;
-      const ratio = totalCount ? Math.round((cnt / totalCount) * 100) : 0;
+      const { total, done } = statsByType[key] || { total: 0, done: 0 };
+      const ratio = total ? Math.round((done / total) * 100) : 0;
       const row = document.createElement("div");
       row.className = "cat-bar-row";
       row.innerHTML = `
@@ -2760,7 +2776,7 @@
         <div class="cat-bar-track">
           <div class="cat-bar-fill" style="width:${ratio}%; background:${meta.color}"></div>
         </div>
-        <span class="cat-bar-time">${cnt}건</span>
+        <span class="cat-bar-time">${done}/${total}건</span>
       `;
       breakdownFrag.appendChild(row);
     }
@@ -3061,6 +3077,35 @@
     }
   }
 
+  function showSystemNotification(title, options) {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.ready
+        .then((reg) => {
+          if (reg && typeof reg.showNotification === "function") {
+            return reg.showNotification(title, {
+              icon: "./icons/icon-192.png",
+              badge: "./icons/icon-192.png",
+              ...options
+            });
+          }
+          new Notification(title, options);
+        })
+        .catch(() => {
+          try {
+            new Notification(title, options);
+          } catch {
+            // ignore
+          }
+        });
+      return;
+    }
+    try {
+      new Notification(title, options);
+    } catch {
+      // ignore browser notification failures
+    }
+  }
+
   function checkBrowserNotifications() {
     if (!prefs.browserNotify || !isViewingToday()) return;
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
@@ -3068,21 +3113,18 @@
     const nowMin = getNowKstMinutes();
     for (const ev of schedules) {
       if (!ev || ev.done || !ev.hasStartAt) continue;
-      if (ev.startMin !== nowMin) continue;
+      const diff = nowMin - ev.startMin;
+      if (diff < 0 || diff > 2) continue;
 
       const key = `${currentDate}:${ev.id}:${ev.startMin}`;
       if (notifiedEventKeys.has(key)) continue;
       notifiedEventKeys.add(key);
 
-      try {
-        const prefix = ev.type === "reminder" ? "🔔 알림" : "📅 시작";
-        new Notification(`${prefix}: ${ev.title}`, {
-          body: formatEventTimeLabel(ev),
-          tag: key
-        });
-      } catch {
-        // ignore browser notification failures
-      }
+      const prefix = ev.type === "reminder" ? "🔔 알림" : "📅 시작";
+      showSystemNotification(`${prefix}: ${ev.title}`, {
+        body: formatEventTimeLabel(ev),
+        tag: key
+      });
     }
   }
 
@@ -4125,6 +4167,7 @@
       syncIfChanged(true, { force: true });
       syncCloudPrefs();
       setupRealtimeSync();
+      checkBrowserNotifications();
     }
   });
   window.addEventListener("focus", () => {
@@ -4136,6 +4179,7 @@
     if (curMin !== lastNowRenderMin) {
       renderEvents();
       renderNowState();
+      renderRightWidgets();
     }
     checkBrowserNotifications();
 
