@@ -23,6 +23,7 @@
 
   const DEFAULT_SETTINGS = {
     mode: "supabase", // 'supabase' | 'agent' | 'local'
+    localExplicit: false,
     agentApiUrl: "",
     agentApiToken: ""
   };
@@ -167,7 +168,12 @@
     if (!stored.mode && localOverride.agentApiUrl && localOverride.agentApiToken) {
       merged.mode = "agent";
     }
+    // 이전 버전에서 기본값이었던 'local' 상태는 명시적 선택이 아니면 로그인 모드로 전환
+    if (stored.mode === "local" && !stored.localExplicit) {
+      merged.mode = "supabase";
+    }
     merged.mode = ["supabase", "agent", "local"].includes(merged.mode) ? merged.mode : "supabase";
+    merged.localExplicit = Boolean(merged.localExplicit);
     merged.agentApiUrl = String(merged.agentApiUrl || "").trim().replace(/\/+$/, "");
     merged.agentApiToken = String(merged.agentApiToken || "").trim();
     return merged;
@@ -179,6 +185,7 @@
       ...DEFAULT_SETTINGS,
       ...next,
       mode,
+      localExplicit: mode === "local" ? Boolean(next.localExplicit) : false,
       agentApiUrl: String(next.agentApiUrl || "").trim().replace(/\/+$/, ""),
       agentApiToken: String(next.agentApiToken || "").trim()
     };
@@ -581,7 +588,7 @@
     });
     if (error) throw new Error(error.message || "로그인에 실패했습니다.");
     const cur = getSettings();
-    saveSettings({ ...cur, mode: "supabase" });
+    saveSettings({ ...cur, mode: "supabase", localExplicit: false });
     return data?.session ?? null;
   }
 

@@ -139,6 +139,14 @@
     presetType: document.getElementById("presetType"),
 
     apiModal: document.getElementById("apiModal"),
+    authGate: document.getElementById("authGate"),
+    authGateForm: document.getElementById("authGateForm"),
+    authGateEmail: document.getElementById("authGateEmail"),
+    authGatePassword: document.getElementById("authGatePassword"),
+    authGateError: document.getElementById("authGateError"),
+    authGateSubmitBtn: document.getElementById("authGateSubmitBtn"),
+    authUseLocalBtn: document.getElementById("authUseLocalBtn"),
+    authUseAgentBtn: document.getElementById("authUseAgentBtn"),
     apiSettingsForm: document.getElementById("apiSettingsForm"),
     supabaseFields: document.getElementById("supabaseFields"),
     sbSignedInBox: document.getElementById("sbSignedInBox"),
@@ -2147,6 +2155,17 @@
     if (signedIn) {
       el.sbUserEmail.textContent = supabaseSession.user.email || supabaseSession.user.id || "로그인됨";
     }
+    updateAuthGateVisibility();
+  }
+
+  function updateAuthGateVisibility() {
+    if (!el.authGate) return;
+    const s = PlannerAPI.getSettings();
+    const shouldShowGate = s.mode === "supabase" && !supabaseSession;
+    el.authGate.classList.toggle("hidden", !shouldShowGate);
+    if (shouldShowGate && el.authGateEmail && !el.authGateEmail.value) {
+      setTimeout(() => el.authGateEmail?.focus(), 40);
+    }
   }
 
   function openApiSettingsModal() {
@@ -2572,6 +2591,52 @@
       showToast("로그아웃했습니다.");
     });
 
+    el.authGateForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = el.authGateEmail.value.trim();
+      const password = el.authGatePassword.value;
+      el.authGateError.classList.add("hidden");
+      el.authGateSubmitBtn.disabled = true;
+      el.authGateSubmitBtn.textContent = "로그인 중...";
+      try {
+        supabaseSession = await PlannerAPI.signInSupabase(email, password);
+        el.authGatePassword.value = "";
+        updateSupabaseAuthUi();
+        updateApiBadge();
+        await loadDay(currentDate);
+        await setupRealtimeSync(true);
+        showToast("가계부 계정으로 로그인되었습니다.", "✅");
+      } catch (err) {
+        el.authGateError.textContent = err.message || "이메일 또는 비밀번호를 확인해 주세요.";
+        el.authGateError.classList.remove("hidden");
+      } finally {
+        el.authGateSubmitBtn.disabled = false;
+        el.authGateSubmitBtn.textContent = "로그인";
+      }
+    });
+
+    el.authUseLocalBtn.addEventListener("click", async () => {
+      PlannerAPI.saveSettings({
+        ...PlannerAPI.getSettings(),
+        mode: "local",
+        localExplicit: true
+      });
+      updateAuthGateVisibility();
+      updateApiBadge();
+      await loadDay(currentDate);
+      showToast("로컬 모드로 전환했습니다.");
+    });
+
+    el.authUseAgentBtn.addEventListener("click", () => {
+      el.authGate.classList.add("hidden");
+      openApiSettingsModal();
+      const agentRadio = el.apiSettingsForm.querySelector('input[name="apiMode"][value="agent"]');
+      if (agentRadio) {
+        agentRadio.checked = true;
+        toggleProviderFields("agent");
+      }
+    });
+
     el.apiSettingsForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const mode = el.apiSettingsForm.querySelector('input[name="apiMode"]:checked')?.value || "supabase";
@@ -2581,10 +2646,12 @@
       }
       PlannerAPI.saveSettings({
         mode,
+        localExplicit: mode === "local",
         agentApiUrl: el.agentApiUrl.value.trim(),
         agentApiToken: el.agentApiToken.value.trim()
       });
       el.apiModal.classList.add("hidden");
+      updateAuthGateVisibility();
       await loadDay(currentDate);
       await setupRealtimeSync(true);
       showToast("설정을 저장하고 일정을 불러왔습니다.");
@@ -2657,8 +2724,14 @@
       supabaseSession = null;
     }
 
-    await loadDay(currentDate);
+    updateSupabaseAuthUi();
+    if (PlannerAPI.getSettings().mode !== "supabase" || supabaseSession) {
+      await loadDay(currentDate);
+    } else {
+      updateApiBadge();
+    }
     if (hashConnectResult.applied) {
+      updateAuthGateVisibility();
       showToast("원클릭 링크로 Muse API에 자동 연결되었습니다.", "🔗");
     }
     setupRealtimeSync();
