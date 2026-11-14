@@ -2949,10 +2949,23 @@ html[data-theme="light"] .modal-backdrop {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 7px;
   padding: 6px 10px;
+}
+
+.preset-manage-item.is-editing {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.preset-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .preset-add-form {

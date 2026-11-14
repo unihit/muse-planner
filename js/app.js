@@ -146,10 +146,13 @@
 
     presetManageList: document.getElementById("presetManageList"),
     addPresetForm: document.getElementById("addPresetForm"),
+    presetEditId: document.getElementById("presetEditId"),
     presetIcon: document.getElementById("presetIcon"),
     presetTitle: document.getElementById("presetTitle"),
     presetDuration: document.getElementById("presetDuration"),
     presetType: document.getElementById("presetType"),
+    presetSubmitBtn: document.getElementById("presetSubmitBtn"),
+    presetCancelEditBtn: document.getElementById("presetCancelEditBtn"),
 
     apiModal: document.getElementById("apiModal"),
     settingsModalBody: document.getElementById("settingsModalBody"),
@@ -2631,20 +2634,66 @@
 
   /* -------------------- 모달: 커스텀 프리셋 -------------------- */
 
+  function resetPresetForm() {
+    if (el.presetEditId) el.presetEditId.value = "";
+    if (el.presetIcon) el.presetIcon.value = "⚡";
+    if (el.presetTitle) el.presetTitle.value = "";
+    if (el.presetDuration) el.presetDuration.value = "30";
+    if (el.presetType) el.presetType.value = "schedule";
+    if (el.presetSubmitBtn) el.presetSubmitBtn.textContent = "추가";
+    if (el.presetCancelEditBtn) el.presetCancelEditBtn.classList.add("hidden");
+    renderPresetManager();
+  }
+
+  function startPresetEdit(p) {
+    if (!p) return;
+    if (el.presetEditId) el.presetEditId.value = p.id;
+    if (el.presetIcon) el.presetIcon.value = p.icon || "⚡";
+    if (el.presetTitle) el.presetTitle.value = p.title || "";
+    if (el.presetDuration) {
+      const durStr = String(Number(p.durationMin || 0));
+      const hasOption = [...el.presetDuration.options].some((o) => o.value === durStr);
+      if (!hasOption) {
+        const opt = document.createElement("option");
+        opt.value = durStr;
+        opt.textContent = Number(durStr) > 0 ? `${durStr}분` : "시작만";
+        el.presetDuration.appendChild(opt);
+      }
+      el.presetDuration.value = durStr;
+    }
+    if (el.presetType) el.presetType.value = p.type || "schedule";
+    if (el.presetSubmitBtn) el.presetSubmitBtn.textContent = "저장";
+    if (el.presetCancelEditBtn) el.presetCancelEditBtn.classList.remove("hidden");
+    renderPresetManager();
+    el.presetTitle?.focus();
+  }
+
   function renderPresetManager() {
     el.presetManageList.innerHTML = "";
+    const editingId = el.presetEditId?.value || "";
     prefs.presets.forEach((p, idx) => {
       const row = document.createElement("div");
-      row.className = "preset-manage-item";
+      row.className = "preset-manage-item" + (editingId && editingId === p.id ? " is-editing" : "");
       const durLabel = p.durationMin > 0 ? `${p.durationMin}분` : "시작 시각만";
       row.innerHTML = `
         <span>${escapeHtml(p.icon)} <strong>${escapeHtml(p.title)}</strong> (${durLabel} · ${TYPE_META[p.type]?.label || p.type})</span>
-        <button type="button" class="mini-btn del">삭제</button>
+        <div class="preset-item-actions">
+          <button type="button" class="mini-btn edit" title="프리셋 편집">편집</button>
+          <button type="button" class="mini-btn del" title="프리셋 삭제">삭제</button>
+        </div>
       `;
+      row.querySelector(".edit").addEventListener("click", () => {
+        startPresetEdit(p);
+      });
       row.querySelector(".del").addEventListener("click", () => {
+        const wasEditing = el.presetEditId?.value === p.id;
         prefs.presets.splice(idx, 1);
         PlannerAPI.savePrefs(prefs);
-        renderPresetManager();
+        if (wasEditing) {
+          resetPresetForm();
+        } else {
+          renderPresetManager();
+        }
         renderPresets();
       });
       el.presetManageList.appendChild(row);
@@ -3169,7 +3218,7 @@
     el.resetPresetsBtn?.addEventListener("click", () => {
       prefs.presets = PlannerAPI.getDefaultPresets();
       PlannerAPI.savePrefs(prefs);
-      renderPresetManager();
+      resetPresetForm();
       renderPresets();
       showToast("빠른 블록 프리셋을 기본값으로 복원했습니다.", "⚡");
     });
@@ -3503,24 +3552,44 @@
 
     // 빠른 블록 프리셋 편집 & 통합 설정 모달 열기
     el.editPresetsBtn?.addEventListener("click", () => {
+      resetPresetForm();
       openApiSettingsModal(el.settingsPresetSection);
+    });
+
+    el.presetCancelEditBtn?.addEventListener("click", () => {
+      resetPresetForm();
     });
 
     el.addPresetForm.addEventListener("submit", (e) => {
       e.preventDefault();
       const title = el.presetTitle.value.trim();
       if (!title) return;
-      prefs.presets.push({
-        id: PlannerAPI.uid("pre"),
+      const editId = el.presetEditId?.value?.trim() || "";
+      const payload = {
         icon: el.presetIcon.value.trim() || "⚡",
         title,
         durationMin: Number(el.presetDuration.value),
         type: el.presetType.value || "schedule"
-      });
-      PlannerAPI.savePrefs(prefs);
-      el.presetTitle.value = "";
-      renderPresetManager();
-      renderPresets();
+      };
+      if (editId) {
+        const target = prefs.presets.find((item) => item.id === editId);
+        if (target) {
+          Object.assign(target, payload);
+        }
+        PlannerAPI.savePrefs(prefs);
+        resetPresetForm();
+        renderPresets();
+        showToast("빠른 블록 프리셋을 수정했습니다.", "💾");
+      } else {
+        prefs.presets.push({
+          id: PlannerAPI.uid("pre"),
+          ...payload
+        });
+        PlannerAPI.savePrefs(prefs);
+        resetPresetForm();
+        renderPresets();
+        showToast("빠른 블록 프리셋을 추가했습니다.", "⚡");
+      }
     });
 
     // 통합 설정 & 계정 모달
