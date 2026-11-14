@@ -85,7 +85,6 @@
     apiSourceLabel: document.getElementById("apiSourceLabel"),
 
     stagingDock: document.getElementById("stagingDock"),
-    stagingHeaderToggle: document.getElementById("stagingHeaderToggle"),
     stagedCountBadge: document.getElementById("stagedCountBadge"),
     mobileTabBar: document.getElementById("mobileTabBar"),
     mobileDockBadge: document.getElementById("mobileDockBadge"),
@@ -3538,30 +3537,6 @@
         });
       });
     }
-
-    // 시간 미정 할 일 패널 및 내부 섹션 터치 접기/펼치기
-    if (el.stagingHeaderToggle && el.stagingDock) {
-      const toggleStagingCollapse = () => {
-        const collapsed = el.stagingDock.classList.toggle("is-collapsed");
-        el.stagingHeaderToggle.setAttribute("aria-expanded", String(!collapsed));
-      };
-      el.stagingHeaderToggle.addEventListener("click", toggleStagingCollapse);
-      el.stagingHeaderToggle.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          toggleStagingCollapse();
-        }
-      });
-    }
-
-    document.querySelectorAll(".section-collapse-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const section = btn.closest(".dock-section");
-        if (!section) return;
-        const collapsed = section.classList.toggle("is-collapsed");
-        btn.setAttribute("aria-expanded", String(!collapsed));
-      });
-    });
 
     // 좌측 시간 미정 추가
     el.addStagedForm.addEventListener("submit", async (e) => {

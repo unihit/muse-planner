@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Muse Elastic Planner — 일간 타임라인 플래너</title>
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-  <link rel="stylesheet" href="./css/style.css?v=20261114-35" />
+  <link rel="stylesheet" href="./css/style.css?v=20261114-36" />
 </head>
 <body>
   <!-- 로그인 화면 (가계부와 동일 Supabase Auth) -->
@@ -194,14 +194,13 @@
     <main class="workspace-grid">
       <!-- 1. 좌측 패널: 시간 미정 할 일 / 보류 도크 (start_at = null) -->
       <aside id="stagingDock" class="panel left-panel">
-        <div id="stagingHeaderToggle" class="panel-header panel-header-collapsible" role="button" tabindex="0" aria-expanded="true">
+        <div class="panel-header">
           <div>
             <h2>📥 시간 미정 할 일</h2>
             <p class="panel-desc">타임라인으로 끌어 시간 배정</p>
           </div>
           <div class="panel-header-right">
             <span id="stagedCountBadge" class="count-badge">0</span>
-            <span class="collapse-chevron" aria-hidden="true">▾</span>
           </div>
         </div>
 
@@ -224,24 +223,18 @@
 
           <div class="panel-scroll">
             <section class="dock-section">
-              <button type="button" class="section-title-row section-collapse-btn" data-collapse-target="untimedList" aria-expanded="true">
+              <div class="section-title-row">
                 <span>📌 미배치 목록</span>
-                <span class="section-title-right">
-                  <span id="untimedCount" class="mini-count">0</span>
-                  <span class="section-chevron" aria-hidden="true">▾</span>
-                </span>
-              </button>
+                <span id="untimedCount" class="mini-count">0</span>
+              </div>
               <div id="untimedList" class="card-stack"></div>
             </section>
 
             <section class="dock-section">
-              <button type="button" class="section-title-row section-collapse-btn" data-collapse-target="reminderHighlightList" aria-expanded="true">
+              <div class="section-title-row">
                 <span>🔔 오늘의 알림 모아보기</span>
-                <span class="section-title-right">
-                  <span id="reminderSummaryCount" class="mini-count">0</span>
-                  <span class="section-chevron" aria-hidden="true">▾</span>
-                </span>
-              </button>
+                <span id="reminderSummaryCount" class="mini-count">0</span>
+              </div>
               <div id="reminderHighlightList" class="card-stack"></div>
             </section>
           </div>
@@ -805,7 +798,7 @@
   <!-- 토스트 알림 -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./js/api.js?v=20261114-35"></script>
-  <script src="./js/app.js?v=20261114-35"></script>
+  <script src="./js/api.js?v=20261114-36"></script>
+  <script src="./js/app.js?v=20261114-36"></script>
 </body>
 </html>

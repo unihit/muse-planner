@@ -1043,8 +1043,7 @@ html[data-theme="light"] .action-btn {
   color: var(--accent-hover);
 }
 
-.left-panel.drop-active .dock-drop-hint,
-.left-panel.is-collapsed.drop-active .dock-drop-hint {
+.left-panel.drop-active .dock-drop-hint {
   display: block;
 }
 
@@ -1170,46 +1169,11 @@ html[data-theme="light"] .action-btn {
   gap: 6px;
 }
 
-.collapse-chevron,
-.section-chevron {
-  font-size: 11px;
-  color: var(--text-dim);
-  transition: transform 0.2s ease;
-  display: inline-block;
-}
-
-.left-panel.is-collapsed .collapse-chevron,
-.dock-section.is-collapsed .section-chevron {
-  transform: rotate(-90deg);
-}
-
 .dock-collapsible-body {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-}
-
-.left-panel.is-collapsed .dock-collapsible-body {
-  display: none;
-}
-
-.dock-section.is-collapsed .card-stack {
-  display: none;
-}
-
-.section-collapse-btn {
-  width: 100%;
-  background: transparent;
-  padding: 2px 0;
-  text-align: left;
-  cursor: pointer;
-}
-
-.section-title-right {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
 }
 
 /* 데스크톱에서는 모바일 전용 요소 숨김 */
