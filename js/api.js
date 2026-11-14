@@ -10,7 +10,9 @@
 (function (global) {
   const SETTINGS_KEY = "muse_planner_api_settings_v2";
   const DAY_STORAGE_PREFIX = "muse_planner_schedules_day_v2_";
+  const BACKLOG_STORAGE_KEY = "muse_planner_backlog_v1";
   const AGENT_CACHE_PREFIX = "muse_planner_agent_cache_v2_";
+  const AGENT_BACKLOG_CACHE_KEY = "muse_planner_agent_backlog_cache_v1";
   const WIDGETS_STORAGE_PREFIX = "muse_planner_widgets_v2_";
   const PREFS_KEY = "muse_planner_ui_prefs_v2";
   const ROUTINE_TEMPLATES_KEY = "muse_planner_routine_templates_v2";
@@ -45,6 +47,8 @@
     placedTasksOnly: false,
     untimedCollapsed: false,
     placedCollapsed: false,
+    showBacklogList: true,
+    backlogCollapsed: false,
     reminderCollapsed: false,
     widgets: {
       summary: true,
@@ -284,6 +288,8 @@
       placedTasksOnly: typeof parsed.placedTasksOnly === "boolean" ? parsed.placedTasksOnly : DEFAULT_PREFS.placedTasksOnly,
       untimedCollapsed: typeof parsed.untimedCollapsed === "boolean" ? parsed.untimedCollapsed : DEFAULT_PREFS.untimedCollapsed,
       placedCollapsed: typeof parsed.placedCollapsed === "boolean" ? parsed.placedCollapsed : DEFAULT_PREFS.placedCollapsed,
+      showBacklogList: typeof parsed.showBacklogList === "boolean" ? parsed.showBacklogList : DEFAULT_PREFS.showBacklogList,
+      backlogCollapsed: typeof parsed.backlogCollapsed === "boolean" ? parsed.backlogCollapsed : DEFAULT_PREFS.backlogCollapsed,
       reminderCollapsed: typeof parsed.reminderCollapsed === "boolean" ? parsed.reminderCollapsed : DEFAULT_PREFS.reminderCollapsed,
       widgets: { ...DEFAULT_PREFS.widgets, ...(parsed.widgets || {}) },
       presets: Array.isArray(parsed.presets) && parsed.presets.length ? parsed.presets : structuredCloneSafe(DEFAULT_PREFS.presets),
@@ -392,7 +398,8 @@
   /* -------------------- 스키마 정규화 (DB <-> 프론트 모델) -------------------- */
 
   function normalizeScheduleRecord(raw, fallbackDate) {
-    const dateStr = raw.date || fallbackDate || todayKst();
+    const isBacklog = raw?.date === null || (raw?.date === undefined && fallbackDate === null);
+    const dateStr = isBacklog ? null : raw?.date || fallbackDate || todayKst();
     const type = ["schedule", "task", "reminder"].includes(raw.type) ? raw.type : "schedule";
     const source = raw.source === "muse" ? "muse" : "app";
 
@@ -401,26 +408,26 @@
     let hasStartAt = false;
     let hasEndAt = false;
 
-    if (raw.start_at) {
+    if (!isBacklog && raw.start_at) {
       const sp = getKstDateTimeParts(new Date(raw.start_at));
       if (Number.isFinite(sp.totalMin)) {
-        startMin = sp.date < dateStr ? 0 : sp.totalMin;
+        startMin = dateStr && sp.date < dateStr ? 0 : sp.totalMin;
         hasStartAt = true;
       }
-    } else if (typeof raw.startMin === "number") {
+    } else if (!isBacklog && typeof raw.startMin === "number") {
       startMin = clampInt(raw.startMin, 0, 1425, 540);
       hasStartAt = true;
     }
 
-    if (raw.end_at && hasStartAt) {
+    if (!isBacklog && raw.end_at && hasStartAt) {
       const ep = getKstDateTimeParts(new Date(raw.end_at));
       if (Number.isFinite(ep.totalMin)) {
-        let candidateEnd = ep.date > dateStr && ep.totalMin === 0 ? 1440 : ep.totalMin;
-        if (ep.date > dateStr && ep.totalMin > 0) candidateEnd = 1440;
+        let candidateEnd = dateStr && ep.date > dateStr && ep.totalMin === 0 ? 1440 : ep.totalMin;
+        if (dateStr && ep.date > dateStr && ep.totalMin > 0) candidateEnd = 1440;
         endMin = Math.max(startMin + 15, candidateEnd);
         hasEndAt = true;
       }
-    } else if (typeof raw.endMin === "number" && hasStartAt) {
+    } else if (!isBacklog && typeof raw.endMin === "number" && hasStartAt) {
       endMin = Math.max(startMin + 15, clampInt(raw.endMin, 15, 1440, startMin + 30));
       hasEndAt = true;
     }
@@ -514,6 +521,23 @@
 
   function saveLocalSchedules(dateStr, items) {
     localStorage.setItem(DAY_STORAGE_PREFIX + dateStr, JSON.stringify(sortSchedules(items)));
+  }
+
+  function loadLocalBacklog() {
+    try {
+      const raw = localStorage.getItem(BACKLOG_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? sortSchedules(parsed.map((item) => normalizeScheduleRecord({ ...item, date: null }, null)))
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveLocalBacklog(items) {
+    localStorage.setItem(BACKLOG_STORAGE_KEY, JSON.stringify(sortSchedules(items)));
   }
 
   function resetLocalSeed(dateStr) {
@@ -647,6 +671,27 @@
     }
   }
 
+  function getCachedBacklog() {
+    try {
+      const raw = localStorage.getItem(AGENT_BACKLOG_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return null;
+      return sortSchedules(parsed.map((item) => normalizeScheduleRecord({ ...item, date: null }, null)));
+    } catch {
+      return null;
+    }
+  }
+
+  function setCachedBacklog(items) {
+    if (!Array.isArray(items)) return;
+    try {
+      localStorage.setItem(AGENT_BACKLOG_CACHE_KEY, JSON.stringify(sortSchedules(items)));
+    } catch {
+      // ignore quota errors
+    }
+  }
+
   async function fetchRealtimeConfig() {
     const settings = getSettings();
     if (settings.mode !== "agent" || !settings.agentApiUrl || !settings.agentApiToken) {
@@ -721,6 +766,19 @@
         setCachedSchedules(d, next);
       } else {
         setCachedSchedules(d, cached.filter((item) => item.id !== normalized.id));
+      }
+    }
+
+    const cachedBacklog = getCachedBacklog();
+    if (cachedBacklog) {
+      if (normalized.date === null) {
+        const exists = cachedBacklog.some((item) => item.id === normalized.id);
+        const next = exists
+          ? cachedBacklog.map((item) => (item.id === normalized.id ? normalized : item))
+          : [...cachedBacklog, normalized];
+        setCachedBacklog(next);
+      } else {
+        setCachedBacklog(cachedBacklog.filter((item) => item.id !== normalized.id));
       }
     }
   }
@@ -799,15 +857,75 @@
     return items;
   }
 
+  async function fetchBacklog() {
+    const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb
+        .from("schedules")
+        .select(SCHEDULE_COLUMNS)
+        .is("date", null)
+        .order("created_at", { ascending: true });
+      if (error) throw new Error(error.message);
+      const normalized = sortSchedules(
+        (Array.isArray(data) ? data : []).map((r) => normalizeScheduleRecord(r, null))
+      );
+      setCachedBacklog(normalized);
+      return normalized;
+    }
+    if (settings.mode === "agent") {
+      const rows = await requestAgentApi(settings, "/v1/backlog");
+      const normalized = sortSchedules(
+        (Array.isArray(rows) ? rows : []).map((r) => normalizeScheduleRecord(r, null))
+      );
+      setCachedBacklog(normalized);
+      return normalized;
+    }
+    return loadLocalBacklog();
+  }
+
+  function appendToCacheAfterCreate(normalized) {
+    if (normalized.date === null) {
+      const cached = getCachedBacklog();
+      if (cached) {
+        setCachedBacklog([...cached.filter((x) => x.id !== normalized.id), normalized]);
+      }
+      return;
+    }
+    const cached = getCachedSchedules(normalized.date);
+    if (cached) {
+      setCachedSchedules(normalized.date, [...cached.filter((x) => x.id !== normalized.id), normalized]);
+    }
+  }
+
+  function removeFromCacheAfterDelete(id, dateHint) {
+    if (dateHint === null) {
+      const cached = getCachedBacklog();
+      if (cached) {
+        setCachedBacklog(cached.filter((item) => item.id !== id));
+      }
+      return;
+    }
+    if (dateHint) {
+      const cached = getCachedSchedules(dateHint);
+      if (cached) {
+        setCachedSchedules(dateHint, cached.filter((item) => item.id !== id));
+      }
+    }
+  }
+
   async function createSchedule(payload) {
+    const isBacklog = payload?.date === null;
+    const targetDate = isBacklog ? null : payload?.date || todayKst();
     const settings = getSettings();
     if (settings.mode === "supabase") {
       await requireSupabaseSession();
       const sb = await getSupabaseClient();
       const insertRow = {
-        date: payload.date || todayKst(),
-        start_at: payload.start_at ?? null,
-        end_at: payload.end_at ?? null,
+        date: targetDate,
+        start_at: isBacklog ? null : payload.start_at ?? null,
+        end_at: isBacklog ? null : payload.end_at ?? null,
         title: String(payload.title || "").trim(),
         type: payload.type || "schedule",
         done: Boolean(payload.done),
@@ -821,41 +939,48 @@
         .select(SCHEDULE_COLUMNS)
         .single();
       if (error) throw new Error(error.message);
-      const normalized = normalizeScheduleRecord(data, insertRow.date);
-      const cached = getCachedSchedules(normalized.date);
-      if (cached) {
-        setCachedSchedules(normalized.date, [...cached.filter((x) => x.id !== normalized.id), normalized]);
-      }
+      const normalized = normalizeScheduleRecord(data, targetDate);
+      appendToCacheAfterCreate(normalized);
       return normalized;
     }
     if (settings.mode === "agent") {
       const created = await requestAgentApi(settings, "/v1/schedules", {
         method: "POST",
-        body: payload
+        body: {
+          ...payload,
+          date: targetDate,
+          start_at: isBacklog ? null : payload.start_at ?? null,
+          end_at: isBacklog ? null : payload.end_at ?? null
+        }
       });
-      const normalized = normalizeScheduleRecord(created, payload.date);
-      const cached = getCachedSchedules(normalized.date);
-      if (cached) {
-        setCachedSchedules(normalized.date, [...cached.filter((x) => x.id !== normalized.id), normalized]);
-      }
+      const normalized = normalizeScheduleRecord(created, targetDate);
+      appendToCacheAfterCreate(normalized);
       return normalized;
     }
 
-    const dateStr = payload.date || todayKst();
-    const list = loadLocalSchedules(dateStr);
     const created = normalizeScheduleRecord(
       {
         id: uid("loc"),
         ...payload,
+        date: targetDate,
+        start_at: isBacklog ? null : payload.start_at ?? null,
+        end_at: isBacklog ? null : payload.end_at ?? null,
         done: Boolean(payload.done),
         done_at: payload.done ? new Date().toISOString() : null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       },
-      dateStr
+      targetDate
     );
-    list.push(created);
-    saveLocalSchedules(dateStr, list);
+    if (isBacklog) {
+      const list = loadLocalBacklog();
+      list.push(created);
+      saveLocalBacklog(list);
+    } else {
+      const list = loadLocalSchedules(targetDate);
+      list.push(created);
+      saveLocalSchedules(targetDate, list);
+    }
     return created;
   }
 
@@ -875,7 +1000,7 @@
         .select(SCHEDULE_COLUMNS)
         .single();
       if (error) throw new Error(error.message);
-      const normalized = normalizeScheduleRecord(data, dateHint);
+      const normalized = normalizeScheduleRecord(data, "date" in updates ? updates.date : dateHint);
       updateCachedAfterPatch(normalized, dateHint);
       return normalized;
     }
@@ -884,27 +1009,30 @@
         method: "PATCH",
         body: patch
       });
-      const normalized = normalizeScheduleRecord(updated, dateHint);
+      const normalized = normalizeScheduleRecord(updated, "date" in patch ? patch.date : dateHint);
       updateCachedAfterPatch(normalized, dateHint);
       return normalized;
     }
 
-    const dateStr = dateHint || todayKst();
-    const list = loadLocalSchedules(dateStr);
-    const idx = list.findIndex((item) => item.id === id);
+    const sourceIsBacklog = dateHint === null;
+    const sourceDateStr = sourceIsBacklog ? null : dateHint || todayKst();
+    const sourceList = sourceIsBacklog ? loadLocalBacklog() : loadLocalSchedules(sourceDateStr);
+    const idx = sourceList.findIndex((item) => item.id === id);
     if (idx === -1) {
       throw new Error("일정을 찾을 수 없습니다.");
     }
-    const prev = list[idx];
+    const prev = sourceList[idx];
+    const nextDate = "date" in patch ? patch.date : prev.date;
+    const nextIsBacklog = nextDate === null;
     const nextRaw = {
       id: prev.id,
-      date: patch.date ?? prev.date,
+      date: nextDate,
       title: patch.title ?? prev.title,
       type: patch.type ?? prev.type,
       source: patch.source ?? prev.source,
       memo: "memo" in patch ? patch.memo : prev.memo,
-      start_at: "start_at" in patch ? patch.start_at : prev.start_at,
-      end_at: "end_at" in patch ? patch.end_at : prev.end_at,
+      start_at: nextIsBacklog ? null : "start_at" in patch ? patch.start_at : prev.start_at,
+      end_at: nextIsBacklog ? null : "end_at" in patch ? patch.end_at : prev.end_at,
       done: "done" in patch ? patch.done : prev.done,
       done_at:
         "done" in patch
@@ -916,8 +1044,20 @@
       updated_at: new Date().toISOString()
     };
     const normalized = normalizeScheduleRecord(nextRaw, nextRaw.date);
-    list[idx] = normalized;
-    saveLocalSchedules(dateStr, list);
+    if (nextDate === sourceDateStr) {
+      sourceList[idx] = normalized;
+      if (sourceIsBacklog) saveLocalBacklog(sourceList);
+      else saveLocalSchedules(sourceDateStr, sourceList);
+    } else {
+      const remaining = sourceList.filter((item) => item.id !== id);
+      if (sourceIsBacklog) saveLocalBacklog(remaining);
+      else saveLocalSchedules(sourceDateStr, remaining);
+
+      const destList = nextIsBacklog ? loadLocalBacklog() : loadLocalSchedules(nextDate);
+      destList.push(normalized);
+      if (nextIsBacklog) saveLocalBacklog(destList);
+      else saveLocalSchedules(nextDate, destList);
+    }
     return normalized;
   }
 
@@ -928,30 +1068,51 @@
       const sb = await getSupabaseClient();
       const { error } = await sb.from("schedules").delete().eq("id", id);
       if (error) throw new Error(error.message);
-      if (dateHint) {
-        const cached = getCachedSchedules(dateHint);
-        if (cached) {
-          setCachedSchedules(dateHint, cached.filter((item) => item.id !== id));
-        }
-      }
+      removeFromCacheAfterDelete(id, dateHint);
       return;
     }
     if (settings.mode === "agent") {
       await requestAgentApi(settings, `/v1/schedules/${encodeURIComponent(id)}`, {
         method: "DELETE"
       });
-      if (dateHint) {
-        const cached = getCachedSchedules(dateHint);
-        if (cached) {
-          setCachedSchedules(dateHint, cached.filter((item) => item.id !== id));
-        }
-      }
+      removeFromCacheAfterDelete(id, dateHint);
       return;
     }
 
+    if (dateHint === null) {
+      const list = loadLocalBacklog().filter((item) => item.id !== id);
+      saveLocalBacklog(list);
+      return;
+    }
     const dateStr = dateHint || todayKst();
     const list = loadLocalSchedules(dateStr).filter((item) => item.id !== id);
     saveLocalSchedules(dateStr, list);
+  }
+
+  async function fetchCarryOverCandidates(fromDateStr, targetItems = []) {
+    const prevItems = await fetchSchedules(fromDateStr, { applyRoutines: false });
+    const existingKeys = new Set(
+      (targetItems || []).map((item) => `${item.type}:${String(item.title || "").trim()}`)
+    );
+    return prevItems.filter((item) => {
+      if (item.done || item.hasStartAt || item.template_id) return false;
+      const key = `${item.type}:${String(item.title || "").trim()}`;
+      return !existingKeys.has(key);
+    });
+  }
+
+  async function carryOverUntimedFromDate(fromDateStr, toDateStr, targetItems = []) {
+    const candidates = await fetchCarryOverCandidates(fromDateStr, targetItems);
+    const moved = [];
+    for (const item of candidates) {
+      const updated = await patchSchedule(
+        item.id,
+        { date: toDateStr, start_at: null, end_at: null },
+        fromDateStr
+      );
+      moved.push(updated);
+    }
+    return { count: moved.length, items: moved };
   }
 
   /* -------------------- 반복 루틴 템플릿 CRUD & 날짜별 적용 -------------------- */
@@ -1246,12 +1407,16 @@
     getCachedSchedules,
     setCachedSchedules,
     clearCachedSchedules,
+    getCachedBacklog,
     fetchRealtimeConfig,
     fetchSchedules,
     fetchSchedulesRange,
+    fetchBacklog,
     createSchedule,
     patchSchedule,
     deleteSchedule,
+    fetchCarryOverCandidates,
+    carryOverUntimedFromDate,
     fetchRoutineTemplates,
     createRoutineTemplate,
     patchRoutineTemplate,

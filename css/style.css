@@ -1387,12 +1387,53 @@ html[data-theme="light"] .reminder-pill-time {
   transform: rotate(-90deg);
 }
 
-.dock-section.is-collapsed .card-stack {
+.dock-section.is-collapsed .card-stack,
+.dock-section.is-collapsed .dock-section-body {
   display: none;
 }
 
 .dock-section.is-collapsed .section-title-row {
   margin-bottom: 0;
+}
+
+.carry-over-btn {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+}
+
+.carry-over-btn:hover {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.backlog-add-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.backlog-add-form input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  color: var(--text);
+  outline: none;
+}
+
+.backlog-add-form input:focus {
+  border-color: var(--accent);
+}
+
+.backlog-add-btn {
+  padding: 5px 8px;
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
 .placed-filter-btn.is-active {

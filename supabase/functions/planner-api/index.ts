@@ -349,8 +349,25 @@ function parseTimestamptzField(
   return new Date(ms).toISOString()
 }
 
+async function listBacklog() {
+  const { data, error } = await db()
+    .from('schedules')
+    .select(SCHEDULE_SELECT)
+    .is('date', null)
+    .order('created_at', { ascending: true })
+
+  if (error) throw dbError(error)
+  return jsonResponse(
+    ((data ?? []) as Record<string, unknown>[]).map(toApiSchedule),
+    200,
+  )
+}
+
 async function listSchedules(req: Request) {
   const url = new URL(req.url)
+  if (url.searchParams.get('backlog') === 'true') {
+    return listBacklog()
+  }
   const dateParam = url.searchParams.get('date')
   const fromParam = url.searchParams.get('from')
   const toParam = url.searchParams.get('to')
@@ -451,13 +468,15 @@ async function listSchedules(req: Request) {
   )
 }
 
-async function createSchedule(req: Request) {
+async function createSchedule(req: Request, forceBacklog = false) {
   const body = await readBody(req)
   const fields: Record<string, string> = {}
 
   const rawDate = body.date
-  let dateVal = ''
-  if (typeof rawDate !== 'string' || !rawDate.trim()) {
+  let dateVal: string | null = null
+  if (forceBacklog || rawDate === null || (rawDate === undefined && body.backlog === true)) {
+    dateVal = null
+  } else if (typeof rawDate !== 'string' || !rawDate.trim()) {
     fields.date = 'date는 YYYY-MM-DD 형식의 필수값입니다.'
   } else {
     dateVal = rawDate.trim()
@@ -474,8 +493,11 @@ async function createSchedule(req: Request) {
     titleVal = rawTitle.trim()
   }
 
-  const startAt = parseTimestamptzField(body.start_at, 'start_at', fields)
-  const endAt = parseTimestamptzField(body.end_at, 'end_at', fields)
+  const startAt = dateVal === null ? null : parseTimestamptzField(body.start_at, 'start_at', fields)
+  const endAt = dateVal === null ? null : parseTimestamptzField(body.end_at, 'end_at', fields)
+  if (dateVal === null && (body.start_at !== undefined && body.start_at !== null || body.end_at !== undefined && body.end_at !== null)) {
+    fields.start_at = '백로그(날짜 미정) 항목에는 시작/종료 시각을 지정할 수 없습니다.'
+  }
 
   if (!fields.start_at && !fields.end_at && endAt !== null) {
     if (startAt === null) {
@@ -546,7 +568,7 @@ async function createSchedule(req: Request) {
   const created = toApiSchedule(data as Record<string, unknown>)
   await notifyScheduleChange('create', {
     id: String(created.id ?? ''),
-    date: String(created.date ?? ''),
+    date: typeof created.date === 'string' ? created.date : null,
     source: String(created.source ?? ''),
   })
   return jsonResponse(created, 201)
@@ -578,8 +600,10 @@ async function updateSchedule(req: Request, id: string) {
   const updates: Record<string, unknown> = {}
 
   if ('date' in body) {
-    if (typeof body.date !== 'string' || !isDateString(body.date.trim())) {
-      fields.date = 'date는 YYYY-MM-DD 형식이어야 합니다.'
+    if (body.date === null) {
+      updates.date = null
+    } else if (typeof body.date !== 'string' || !isDateString(body.date.trim())) {
+      fields.date = 'date는 YYYY-MM-DD 형식이거나 null이어야 합니다.'
     } else {
       updates.date = body.date.trim()
     }
@@ -663,10 +687,18 @@ async function updateSchedule(req: Request, id: string) {
   }
 
   if (!fields.start_at && !fields.end_at) {
+    const nextDate = 'date' in updates ? updates.date : existing.date
     const nextStart =
       'start_at' in updates ? updates.start_at : existing.start_at
     const nextEnd = 'end_at' in updates ? updates.end_at : existing.end_at
-    if (nextEnd !== null && nextEnd !== undefined) {
+    if (nextDate === null && (nextStart !== null && nextStart !== undefined || nextEnd !== null && nextEnd !== undefined)) {
+      if ('date' in updates && !('start_at' in updates) && !('end_at' in updates)) {
+        updates.start_at = null
+        updates.end_at = null
+      } else {
+        fields.start_at = '백로그(날짜 미정) 항목에는 시작/종료 시각을 지정할 수 없습니다.'
+      }
+    } else if (nextEnd !== null && nextEnd !== undefined) {
       if (nextStart === null || nextStart === undefined) {
         fields.end_at = 'end_at을 지정할 때는 start_at도 함께 있어야 합니다.'
       } else if (Date.parse(String(nextEnd)) < Date.parse(String(nextStart))) {
@@ -699,7 +731,7 @@ async function updateSchedule(req: Request, id: string) {
       : null
   await notifyScheduleChange('update', {
     id: String(updated.id ?? ''),
-    date: String(updated.date ?? ''),
+    date: typeof updated.date === 'string' ? updated.date : null,
     prevDate,
     source: String(updated.source ?? ''),
   })
@@ -782,6 +814,11 @@ async function handle(req: Request): Promise<Response> {
   if (path === '/v1/schedules') {
     if (method === 'GET') return listSchedules(req)
     if (method === 'POST') return createSchedule(req)
+  }
+
+  if (path === '/v1/backlog') {
+    if (method === 'GET') return listBacklog()
+    if (method === 'POST') return createSchedule(req, true)
   }
 
   const scheduleMatch = path.match(/^\/v1\/schedules\/([^/]+)$/)

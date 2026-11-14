@@ -9,6 +9,9 @@
   let currentDate = PlannerAPI.todayKst();
   let prefs = PlannerAPI.getPrefs();
   let schedules = [];
+  let backlogItems = [];
+  let carryOverCount = 0;
+  let carryOverCheckToken = 0;
   let widgetsState = { youtubeList: [], memo: "" };
   let selectedEventId = null;
   let touchDraftSlot = null;
@@ -97,6 +100,7 @@
     newStagedType: document.getElementById("newStagedType"),
     untimedSection: document.getElementById("untimedSection"),
     untimedCollapseBtn: document.getElementById("untimedCollapseBtn"),
+    carryOverBtn: document.getElementById("carryOverBtn"),
     untimedCount: document.getElementById("untimedCount"),
     untimedList: document.getElementById("untimedList"),
     placedSection: document.getElementById("placedSection"),
@@ -104,6 +108,12 @@
     placedCount: document.getElementById("placedCount"),
     placedList: document.getElementById("placedList"),
     placedTasksOnlyBtn: document.getElementById("placedTasksOnlyBtn"),
+    backlogSection: document.getElementById("backlogSection"),
+    backlogCollapseBtn: document.getElementById("backlogCollapseBtn"),
+    backlogCount: document.getElementById("backlogCount"),
+    addBacklogForm: document.getElementById("addBacklogForm"),
+    newBacklogTitle: document.getElementById("newBacklogTitle"),
+    backlogList: document.getElementById("backlogList"),
     reminderSection: document.getElementById("reminderSection"),
     reminderCollapseBtn: document.getElementById("reminderCollapseBtn"),
     reminderSummaryCount: document.getElementById("reminderSummaryCount"),
@@ -145,6 +155,7 @@
     editTitle: document.getElementById("editTitle"),
     editDate: document.getElementById("editDate"),
     editType: document.getElementById("editType"),
+    editBacklogCheck: document.getElementById("editBacklogCheck"),
     editTimedCheck: document.getElementById("editTimedCheck"),
     editTimeFields: document.getElementById("editTimeFields"),
     editStart: document.getElementById("editStart"),
@@ -199,6 +210,7 @@
     dimCompletedCheck: document.getElementById("dimCompletedCheck"),
     browserNotifyCheck: document.getElementById("browserNotifyCheck"),
     showPlacedListCheck: document.getElementById("showPlacedListCheck"),
+    showBacklogListCheck: document.getElementById("showBacklogListCheck"),
     settingsWidgetChecks: document.getElementById("settingsWidgetChecks"),
     resetPresetsBtn: document.getElementById("resetPresetsBtn"),
     resetAllPrefsBtn: document.getElementById("resetAllPrefsBtn"),
@@ -788,9 +800,190 @@
 
   /* -------------------- API 호출 래퍼 -------------------- */
 
+  function updateCarryOverButtonUi() {
+    if (!el.carryOverBtn) return;
+    if (carryOverCount > 0) {
+      el.carryOverBtn.textContent = `↩ 어제 ${carryOverCount}`;
+      el.carryOverBtn.classList.remove("hidden");
+    } else {
+      el.carryOverBtn.classList.add("hidden");
+    }
+  }
+
+  async function refreshCarryOverCount(targetDate = currentDate) {
+    const token = ++carryOverCheckToken;
+    const yesterday = PlannerAPI.shiftDateStr(targetDate, -1);
+    try {
+      const candidates = await PlannerAPI.fetchCarryOverCandidates(yesterday, schedules);
+      if (token !== carryOverCheckToken || targetDate !== currentDate) return;
+      carryOverCount = candidates.length;
+    } catch {
+      if (token !== carryOverCheckToken || targetDate !== currentDate) return;
+      carryOverCount = 0;
+    }
+    updateCarryOverButtonUi();
+  }
+
+  async function loadBacklogQuietly() {
+    const settings = PlannerAPI.getSettings();
+    if (
+      backlogItems.length === 0 &&
+      (settings.mode === "agent" || settings.mode === "supabase")
+    ) {
+      const cachedBacklog = PlannerAPI.getCachedBacklog();
+      if (cachedBacklog) {
+        backlogItems = cachedBacklog;
+        renderLists();
+      }
+    }
+    try {
+      const fresh = await PlannerAPI.fetchBacklog();
+      backlogItems = fresh;
+      renderLists();
+    } catch {
+      // 백로그 조회 실패 시 기존 캐시 유지
+    }
+  }
+
+  async function moveItemBetweenDayAndBacklog(item, toDate, timeRange = null) {
+    if (!item) return;
+    const prevDate = item.date ?? null;
+    const nextIsBacklog = toDate === null;
+    const prevSnap = {
+      date: prevDate,
+      start_at: item.start_at,
+      end_at: item.end_at
+    };
+    const nextStartAt =
+      !nextIsBacklog && timeRange && timeRange.startMin !== undefined && timeRange.startMin !== null
+        ? PlannerAPI.kstMinutesToIso(toDate, timeRange.startMin)
+        : null;
+    const nextEndAt =
+      !nextIsBacklog && timeRange && timeRange.endMin !== undefined && timeRange.endMin !== null
+        ? PlannerAPI.kstMinutesToIso(toDate, timeRange.endMin)
+        : null;
+
+    const patchPayload = {
+      date: toDate,
+      start_at: nextStartAt,
+      end_at: nextEndAt
+    };
+
+    lastUserMutationAt = Date.now();
+    const prevSchedules = [...schedules];
+    const prevBacklog = [...backlogItems];
+
+    const optimistic = PlannerAPI.normalizeScheduleRecord(
+      { ...item, ...patchPayload },
+      toDate
+    );
+
+    if (nextIsBacklog) {
+      schedules = schedules.filter((s) => s.id !== item.id);
+      backlogItems = PlannerAPI.sortSchedules([...backlogItems.filter((b) => b.id !== item.id), optimistic]);
+    } else {
+      backlogItems = backlogItems.filter((b) => b.id !== item.id);
+      if (toDate === currentDate) {
+        schedules = PlannerAPI.sortSchedules([...schedules.filter((s) => s.id !== item.id), optimistic]);
+      }
+    }
+    syncSwrCacheIfCurrent(currentDate, schedules);
+    renderAll();
+
+    try {
+      const updated = await PlannerAPI.patchSchedule(item.id, patchPayload, prevDate);
+      if (updated) {
+        if (updated.date === null) {
+          backlogItems = PlannerAPI.sortSchedules([
+            ...backlogItems.filter((b) => b.id !== updated.id),
+            updated
+          ]);
+        } else if (updated.date === currentDate) {
+          schedules = PlannerAPI.sortSchedules([
+            ...schedules.filter((s) => s.id !== updated.id),
+            updated
+          ]);
+        }
+        syncSwrCacheIfCurrent(currentDate, schedules);
+        renderAll();
+      }
+
+      pushUndoAction(
+        nextIsBacklog ? `'${item.title}' 백로그 보관` : `'${item.title}' 오늘로 이동`,
+        async () => {
+          const reverted = await PlannerAPI.patchSchedule(item.id, prevSnap, toDate);
+          if (reverted) {
+            backlogItems = backlogItems.filter((b) => b.id !== reverted.id);
+            schedules = schedules.filter((s) => s.id !== reverted.id);
+            if (reverted.date === null) {
+              backlogItems = PlannerAPI.sortSchedules([...backlogItems, reverted]);
+            } else if (reverted.date === currentDate) {
+              schedules = PlannerAPI.sortSchedules([...schedules, reverted]);
+            }
+            syncSwrCacheIfCurrent(currentDate, schedules);
+            renderAll();
+          }
+        }
+      );
+
+      showToast(
+        nextIsBacklog
+          ? `'${item.title}'을(를) 나중에 할 일로 옮겼습니다.`
+          : nextStartAt
+            ? `${minToTimeStr(timeRange.startMin)}에 '${item.title}' 배치됨`
+            : `'${item.title}'을(를) 오늘 미배치 목록으로 옮겼습니다.`,
+        nextIsBacklog ? "📦" : "📌"
+      );
+    } catch (err) {
+      schedules = prevSchedules;
+      backlogItems = prevBacklog;
+      syncSwrCacheIfCurrent(currentDate, schedules);
+      renderAll();
+      showToast(`이동 실패: ${err.message}`, "⚠️");
+    }
+  }
+
+  async function carryOverYesterdayUntimed() {
+    const yesterday = PlannerAPI.shiftDateStr(currentDate, -1);
+    const targetDate = currentDate;
+    try {
+      lastUserMutationAt = Date.now();
+      const res = await PlannerAPI.carryOverUntimedFromDate(yesterday, targetDate, schedules);
+      if (!res.count) {
+        carryOverCount = 0;
+        updateCarryOverButtonUi();
+        showToast("어제 남은 미완료 미배치 항목이 없습니다.");
+        return;
+      }
+
+      schedules = PlannerAPI.sortSchedules([
+        ...schedules.filter((s) => !res.items.some((m) => m.id === s.id)),
+        ...res.items
+      ]);
+      syncSwrCacheIfCurrent(targetDate, schedules);
+      carryOverCount = 0;
+      updateCarryOverButtonUi();
+      renderAll();
+
+      const movedIds = res.items.map((m) => m.id);
+      pushUndoAction(`어제 미완료 ${res.count}건 이월`, async () => {
+        for (const id of movedIds) {
+          await PlannerAPI.patchSchedule(id, { date: yesterday, start_at: null, end_at: null }, targetDate);
+        }
+        await loadDay(currentDate, false);
+      });
+
+      showToast(`어제 미완료 ${res.count}건을 오늘 미배치 목록으로 가져왔습니다.`, "↩️");
+    } catch (err) {
+      showToast(`이월 실패: ${err.message}`, "⚠️");
+    }
+  }
+
   async function loadDay(dateStr, scrollOptimal = true) {
     const reqToken = ++loadRequestToken;
     currentDate = dateStr;
+    carryOverCount = 0;
+    updateCarryOverButtonUi();
     updateDateDisplay(dateStr);
     selectedEventId = null;
     updateApiBadge();
@@ -810,11 +1003,14 @@
       }
     }
 
+    loadBacklogQuietly();
+
     try {
       const fresh = await PlannerAPI.fetchSchedules(dateStr);
       if (reqToken !== loadRequestToken || dateStr !== currentDate) return;
       schedules = fresh;
       renderAll();
+      refreshCarryOverCount(dateStr);
       if (!cached && scrollOptimal) {
         scrollToOptimalPosition();
       }
@@ -875,12 +1071,19 @@
     const targetDate = currentDate;
 
     try {
-      const fresh = await PlannerAPI.fetchSchedules(targetDate, { applyRoutines: false });
+      const [fresh, freshBacklog] = await Promise.all([
+        PlannerAPI.fetchSchedules(targetDate, { applyRoutines: false }),
+        PlannerAPI.fetchBacklog()
+      ]);
       if (targetDate !== currentDate || isAutoSyncPaused({ ignoreInFlight: true })) return;
 
-      if (getScheduleSignature(fresh) !== getScheduleSignature(schedules)) {
+      const dayChanged = getScheduleSignature(fresh) !== getScheduleSignature(schedules);
+      const backlogChanged = getScheduleSignature(freshBacklog) !== getScheduleSignature(backlogItems);
+      if (dayChanged || backlogChanged) {
         schedules = fresh;
+        backlogItems = freshBacklog;
         renderAll();
+        refreshCarryOverCount(targetDate);
         if (showNotify) {
           showToast("일정 변경사항이 실시간 반영되었습니다.", "⚡");
         }
@@ -958,6 +1161,8 @@
 
             const affectsCurrent =
               (!changedDate && !oldDate) ||
+              (nextRow.id && nextRow.date === null) ||
+              (oldRow.id && oldRow.date === null) ||
               changedDate === currentDate ||
               oldDate === currentDate;
             if (!affectsCurrent) return;
@@ -1033,14 +1238,26 @@
   function syncSwrCacheIfCurrent(dateStr, list) {
     const mode = PlannerAPI.getSettings().mode;
     if (mode === "agent" || mode === "supabase") {
-      PlannerAPI.setCachedSchedules(dateStr, list);
+      if (dateStr === null) {
+        PlannerAPI.setCachedBacklog(list);
+      } else {
+        PlannerAPI.setCachedSchedules(dateStr, list);
+      }
     }
+  }
+
+  function findItemById(id) {
+    return schedules.find((s) => s.id === id) || backlogItems.find((b) => b.id === id) || null;
   }
 
   async function createScheduleAndRecord(payload, toastMsg) {
     lastUserMutationAt = Date.now();
     const created = await PlannerAPI.createSchedule(payload);
-    if (created.date === currentDate) {
+    if (created.date === null) {
+      backlogItems = PlannerAPI.sortSchedules([...backlogItems.filter((b) => b.id !== created.id), created]);
+      syncSwrCacheIfCurrent(null, backlogItems);
+      renderAll();
+    } else if (created.date === currentDate) {
       schedules = PlannerAPI.sortSchedules([...schedules.filter((s) => s.id !== created.id), created]);
       syncSwrCacheIfCurrent(currentDate, schedules);
       renderAll();
@@ -1060,17 +1277,28 @@
 
   async function toggleScheduleDone(id, checked, options = {}) {
     const { recordUndo = true } = options;
-    const idx = schedules.findIndex((s) => s.id === id);
+    const dayIdx = schedules.findIndex((s) => s.id === id);
+    const isBacklog = dayIdx === -1;
+    const listRef = isBacklog ? backlogItems : schedules;
+    const idx = isBacklog ? backlogItems.findIndex((b) => b.id === id) : dayIdx;
     if (idx === -1) return;
-    const prev = { ...schedules[idx] };
+
+    const prev = { ...listRef[idx] };
+    const dateHint = isBacklog ? null : currentDate;
     lastUserMutationAt = Date.now();
-    schedules[idx] = {
+    const nextItem = {
       ...prev,
       done: checked,
       done_at: checked ? new Date().toISOString() : null,
       updated_at: new Date().toISOString()
     };
-    syncSwrCacheIfCurrent(currentDate, schedules);
+    if (isBacklog) {
+      backlogItems[idx] = nextItem;
+      syncSwrCacheIfCurrent(null, backlogItems);
+    } else {
+      schedules[idx] = nextItem;
+      syncSwrCacheIfCurrent(currentDate, schedules);
+    }
     renderAll();
 
     if (recordUndo) {
@@ -1080,37 +1308,60 @@
     }
 
     try {
-      const updated = await PlannerAPI.patchSchedule(id, { done: checked }, currentDate);
-      const curIdx = schedules.findIndex((s) => s.id === id);
-      if (curIdx !== -1 && updated) {
-        schedules[curIdx] = updated;
-        syncSwrCacheIfCurrent(currentDate, schedules);
+      const updated = await PlannerAPI.patchSchedule(id, { done: checked }, dateHint);
+      if (updated) {
+        if (isBacklog) {
+          const curIdx = backlogItems.findIndex((b) => b.id === id);
+          if (curIdx !== -1) backlogItems[curIdx] = updated;
+          syncSwrCacheIfCurrent(null, backlogItems);
+        } else {
+          const curIdx = schedules.findIndex((s) => s.id === id);
+          if (curIdx !== -1) schedules[curIdx] = updated;
+          syncSwrCacheIfCurrent(currentDate, schedules);
+        }
         renderAll();
       }
       if (recordUndo) {
         showToast(checked ? `'${prev.title}' 완료!` : `'${prev.title}' 완료 해제`, checked ? "✅" : "↩️");
       }
     } catch (err) {
-      const curIdx = schedules.findIndex((s) => s.id === id);
-      if (curIdx !== -1) schedules[curIdx] = prev;
-      syncSwrCacheIfCurrent(currentDate, schedules);
+      if (isBacklog) {
+        const curIdx = backlogItems.findIndex((b) => b.id === id);
+        if (curIdx !== -1) backlogItems[curIdx] = prev;
+        syncSwrCacheIfCurrent(null, backlogItems);
+      } else {
+        const curIdx = schedules.findIndex((s) => s.id === id);
+        if (curIdx !== -1) schedules[curIdx] = prev;
+        syncSwrCacheIfCurrent(currentDate, schedules);
+      }
       renderAll();
       showToast(`완료 저장 실패: ${err.message}`, "⚠️");
     }
   }
 
   async function deleteScheduleById(id, options = {}) {
-    const { recordUndo = true, targetDate = currentDate } = options;
-    const removed = schedules.find((s) => s.id === id);
-    const prevList = [...schedules];
+    const { recordUndo = true, targetDate } = options;
+    const removedDay = schedules.find((s) => s.id === id);
+    const removedBacklog = !removedDay ? backlogItems.find((b) => b.id === id) : null;
+    const removed = removedDay || removedBacklog;
+    const isBacklog = Boolean(removedBacklog) || targetDate === null;
+    const effectiveDate = targetDate !== undefined ? targetDate : isBacklog ? null : currentDate;
+
+    const prevSchedules = [...schedules];
+    const prevBacklog = [...backlogItems];
     lastUserMutationAt = Date.now();
-    schedules = schedules.filter((s) => s.id !== id);
+    if (isBacklog) {
+      backlogItems = backlogItems.filter((b) => b.id !== id);
+      syncSwrCacheIfCurrent(null, backlogItems);
+    } else {
+      schedules = schedules.filter((s) => s.id !== id);
+      syncSwrCacheIfCurrent(currentDate, schedules);
+    }
     if (selectedEventId === id) selectedEventId = null;
-    syncSwrCacheIfCurrent(currentDate, schedules);
     renderAll();
 
     try {
-      await PlannerAPI.deleteSchedule(id, targetDate);
+      await PlannerAPI.deleteSchedule(id, effectiveDate);
       if (recordUndo && removed) {
         const snapshot = { ...removed };
         const undoEntry = pushUndoAction(`'${snapshot.title}' 삭제`, async () => {
@@ -1126,7 +1377,11 @@
           const finalRec = snapshot.done
             ? await PlannerAPI.patchSchedule(recreated.id, { done: true }, snapshot.date)
             : recreated;
-          if (finalRec.date === currentDate) {
+          if (finalRec.date === null) {
+            backlogItems = PlannerAPI.sortSchedules([...backlogItems, finalRec]);
+            syncSwrCacheIfCurrent(null, backlogItems);
+            renderAll();
+          } else if (finalRec.date === currentDate) {
             schedules = PlannerAPI.sortSchedules([...schedules, finalRec]);
             syncSwrCacheIfCurrent(currentDate, schedules);
             renderAll();
@@ -1155,8 +1410,10 @@
         });
       }
     } catch (err) {
-      schedules = prevList;
+      schedules = prevSchedules;
+      backlogItems = prevBacklog;
       syncSwrCacheIfCurrent(currentDate, schedules);
+      syncSwrCacheIfCurrent(null, backlogItems);
       renderAll();
       showToast(`삭제 실패: ${err.message}`, "⚠️");
     }
@@ -1315,9 +1572,12 @@
     if (el.browserNotifyCheck) el.browserNotifyCheck.checked = Boolean(prefs.browserNotify);
     if (el.showPlacedListCheck) el.showPlacedListCheck.checked = prefs.showPlacedList !== false;
     if (el.placedSection) el.placedSection.classList.toggle("hidden", prefs.showPlacedList === false);
+    if (el.showBacklogListCheck) el.showBacklogListCheck.checked = prefs.showBacklogList !== false;
+    if (el.backlogSection) el.backlogSection.classList.toggle("hidden", prefs.showBacklogList === false);
     [
       [el.untimedSection, el.untimedCollapseBtn, Boolean(prefs.untimedCollapsed)],
       [el.placedSection, el.placedCollapseBtn, Boolean(prefs.placedCollapsed)],
+      [el.backlogSection, el.backlogCollapseBtn, Boolean(prefs.backlogCollapsed)],
       [el.reminderSection, el.reminderCollapseBtn, Boolean(prefs.reminderCollapsed)],
     ].forEach(([section, btn, collapsed]) => {
       if (section) section.classList.toggle("is-collapsed", collapsed);
@@ -1487,6 +1747,7 @@
               <span>${TYPE_META[item.type]?.label || "일정"}</span>
               <div class="dock-card-actions">
                 <button type="button" class="mini-btn place-btn" title="빈 시간에 배치">+ 배치</button>
+                <button type="button" class="mini-btn defer-btn" title="나중에 할 일(백로그)로 보관">📦</button>
                 <button type="button" class="mini-btn del del-btn" title="삭제">✕</button>
               </div>
             </div>
@@ -1504,6 +1765,10 @@
             const startMin = findNextAvailableSlot(30);
             const endMin = item.type === "reminder" ? null : Math.min(1440, startMin + 30);
             await commitScheduleTimeChange(item, startMin, endMin);
+          });
+
+          card.querySelector(".defer-btn").addEventListener("click", () => {
+            moveItemBetweenDayAndBacklog(item, null);
           });
 
           card.querySelector(".del-btn").addEventListener("click", () => {
@@ -1603,6 +1868,81 @@
               });
 
               el.placedList.appendChild(card);
+            }
+          });
+        }
+      }
+    }
+
+    if (el.backlogList && el.backlogCount) {
+      const backlogSorted = sortDoneBottom(backlogItems);
+      el.backlogCount.textContent = String(backlogSorted.length);
+
+      if (prefs.showBacklogList !== false) {
+        const backlogKey = backlogSorted
+          .map((s) => `${s.id}:${s.done ? 1 : 0}:${s.type}:${s.title}`)
+          .join("|");
+        if (el.backlogList.dataset.renderKey !== backlogKey) {
+          el.backlogList.dataset.renderKey = backlogKey;
+          animateListReorder(el.backlogList, () => {
+            el.backlogList.innerHTML = "";
+            if (!backlogSorted.length) {
+              el.backlogList.innerHTML = `<div class="empty-hint">나중에 할 일이 없습니다.<br/>위에서 추가하거나 미배치 카드의 📦 버튼으로 보류하세요.</div>`;
+              return;
+            }
+            for (const item of backlogSorted) {
+              const card = document.createElement("div");
+              card.className = `dock-card is-backlog ${item.done ? "is-done" : ""}`;
+              card.dataset.id = item.id;
+              card.dataset.type = item.type;
+              card.draggable = true;
+
+              card.innerHTML = `
+                <div class="dock-card-top">
+                  ${item.type !== "reminder" ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
+                  <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
+                </div>
+                <div class="dock-card-meta">
+                  <span>${TYPE_META[item.type]?.label || "할 일"}</span>
+                  <div class="dock-card-actions">
+                    <button type="button" class="mini-btn to-today-btn" title="오늘 미배치 목록으로 옮기기">📌 오늘</button>
+                    <button type="button" class="mini-btn del del-btn" title="삭제">✕</button>
+                  </div>
+                </div>
+              `;
+
+              card.querySelector(".event-check")?.addEventListener("change", (e) => {
+                toggleScheduleDone(item.id, e.target.checked);
+              });
+
+              card.querySelector(".dock-card-title").addEventListener("click", () => {
+                openEventModal(item.id);
+              });
+
+              card.querySelector(".to-today-btn").addEventListener("click", () => {
+                moveItemBetweenDayAndBacklog(item, currentDate);
+              });
+
+              card.querySelector(".del-btn").addEventListener("click", () => {
+                deleteScheduleById(item.id, { targetDate: null });
+              });
+
+              card.addEventListener("dragstart", (e) => {
+                activeHtmlDragPayload = {
+                  kind: "backlog",
+                  id: item.id,
+                  title: item.title,
+                  durationMin: item.type === "reminder" ? 0 : getDefaultDurationMin(),
+                  type: item.type
+                };
+                e.dataTransfer.setData("text/plain", JSON.stringify(activeHtmlDragPayload));
+              });
+              card.addEventListener("dragend", () => {
+                activeHtmlDragPayload = null;
+                el.ghostPreview.classList.add("hidden");
+              });
+
+              el.backlogList.appendChild(card);
             }
           });
         }
@@ -2448,6 +2788,14 @@
         if (payload.kind === "untimed") {
           const item = schedules.find((s) => s.id === payload.id);
           if (item) await commitScheduleTimeChange(item, dropStart, dropEnd);
+        } else if (payload.kind === "backlog") {
+          const item = backlogItems.find((b) => b.id === payload.id);
+          if (item) {
+            await moveItemBetweenDayAndBacklog(item, currentDate, {
+              startMin: dropStart,
+              endMin: payload.type === "reminder" ? null : dropEnd
+            });
+          }
         } else if (payload.kind === "youtube") {
           await createScheduleAndRecord(
             {
@@ -2872,8 +3220,18 @@
   /* -------------------- 모달: 일정 생성 / 편집 -------------------- */
 
   function syncTimeFieldsVisibility() {
+    const isBacklog = Boolean(el.editBacklogCheck?.checked);
     const isReminder = el.editType?.value === "reminder";
-    const timed = el.editTimedCheck.checked;
+    if (el.editDate) {
+      el.editDate.disabled = isBacklog;
+      el.editDate.required = !isBacklog;
+    }
+    if (el.editTimedCheck) {
+      if (isBacklog) el.editTimedCheck.checked = false;
+      el.editTimedCheck.disabled = isBacklog;
+    }
+
+    const timed = !isBacklog && el.editTimedCheck.checked;
     el.editTimeFields.classList.toggle("hidden", !timed);
     el.editStart.required = timed;
 
@@ -2943,6 +3301,7 @@
     el.editTitle.value = "";
     el.editDate.value = currentDate;
     el.editType.value = "schedule";
+    if (el.editBacklogCheck) el.editBacklogCheck.checked = false;
     el.editTimedCheck.checked = true;
     el.editStart.value = minToTimeStr(Math.min(1439, startMin));
     el.editHasEndCheck.checked = true;
@@ -2957,15 +3316,17 @@
   }
 
   function openEventModal(eventId) {
-    const ev = schedules.find((e) => e.id === eventId);
+    const ev = findItemById(eventId);
     if (!ev) return;
+    const isBacklog = ev.date === null;
     if (el.modalUntimedPicker) el.modalUntimedPicker.classList.add("hidden");
-    el.eventModalTitle.textContent = "일정 세부 편집";
+    el.eventModalTitle.textContent = isBacklog ? "나중에 할 일 편집" : "일정 세부 편집";
     el.editEventId.value = ev.id;
     el.editTitle.value = ev.title;
     el.editDate.value = ev.date || currentDate;
     el.editType.value = ev.type || "schedule";
-    el.editTimedCheck.checked = ev.hasStartAt;
+    if (el.editBacklogCheck) el.editBacklogCheck.checked = isBacklog;
+    el.editTimedCheck.checked = !isBacklog && ev.hasStartAt;
     el.editStart.value = ev.hasStartAt ? minToTimeStr(Math.min(1439, ev.startMin)) : "09:00";
     el.editHasEndCheck.checked = ev.hasStartAt && ev.hasEndAt && ev.endMin !== null;
     el.editEnd.value =
@@ -3561,9 +3922,18 @@
       showToast(prefs.showPlacedList ? "좌측 배치 목록을 표시합니다." : "좌측 배치 목록을 숨겼습니다.");
     });
 
+    el.showBacklogListCheck?.addEventListener("change", (e) => {
+      prefs.showBacklogList = e.target.checked;
+      PlannerAPI.savePrefs(prefs);
+      applyPrefsToUI();
+      renderAll();
+      showToast(prefs.showBacklogList ? "나중에 할 일(백로그)을 표시합니다." : "나중에 할 일(백로그)을 숨겼습니다.");
+    });
+
     [
       [el.untimedCollapseBtn, "untimedCollapsed"],
       [el.placedCollapseBtn, "placedCollapsed"],
+      [el.backlogCollapseBtn, "backlogCollapsed"],
       [el.reminderCollapseBtn, "reminderCollapsed"],
     ].forEach(([btn, prefKey]) => {
       btn?.addEventListener("click", () => {
@@ -3571,6 +3941,33 @@
         PlannerAPI.savePrefs(prefs);
         applyPrefsToUI();
       });
+    });
+
+    el.carryOverBtn?.addEventListener("click", () => {
+      carryOverYesterdayUntimed();
+    });
+
+    el.addBacklogForm?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const title = el.newBacklogTitle?.value?.trim() || "";
+      if (!title) return;
+      el.newBacklogTitle.value = "";
+      try {
+        await createScheduleAndRecord(
+          {
+            date: null,
+            start_at: null,
+            end_at: null,
+            title,
+            type: "task",
+            source: "app",
+            memo: ""
+          },
+          `'${title}'을(를) 나중에 할 일에 보관했습니다.`
+        );
+      } catch (err) {
+        showToast(`백로그 등록 실패: ${err.message}`, "⚠️");
+      }
     });
 
     el.placedTasksOnlyBtn?.addEventListener("click", () => {
@@ -3842,14 +4239,30 @@
     });
 
     // 일정 편집 모달 제어
+    el.editBacklogCheck?.addEventListener("change", syncTimeFieldsVisibility);
     el.editTimedCheck.addEventListener("change", syncTimeFieldsVisibility);
     el.editHasEndCheck.addEventListener("change", syncTimeFieldsVisibility);
     el.editType.addEventListener("change", syncTimeFieldsVisibility);
 
+    function applyPatchedRecordToState(record) {
+      if (!record) return;
+      schedules = schedules.filter((s) => s.id !== record.id);
+      backlogItems = backlogItems.filter((b) => b.id !== record.id);
+      if (record.date === null) {
+        backlogItems = PlannerAPI.sortSchedules([...backlogItems, record]);
+        syncSwrCacheIfCurrent(null, backlogItems);
+      } else if (record.date === currentDate) {
+        schedules = PlannerAPI.sortSchedules([...schedules, record]);
+      }
+      syncSwrCacheIfCurrent(currentDate, schedules);
+      renderAll();
+    }
+
     el.eventForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const id = el.editEventId.value;
-      const dateVal = el.editDate.value || currentDate;
+      const isBacklog = Boolean(el.editBacklogCheck?.checked);
+      const dateVal = isBacklog ? null : el.editDate.value || currentDate;
       const titleVal = el.editTitle.value.trim();
       if (!titleVal) return;
 
@@ -3857,7 +4270,7 @@
       const isReminder = typeVal === "reminder";
       let startAt = null;
       let endAt = null;
-      if (el.editTimedCheck.checked) {
+      if (!isBacklog && el.editTimedCheck.checked) {
         const startMin = PlannerAPI.hhmmToMinutes(el.editStart.value);
         if (startMin === null) {
           showToast("시작 시각을 입력해 주세요.");
@@ -3888,15 +4301,14 @@
       try {
         el.eventModal.classList.add("hidden");
         if (id) {
-          const prevEv = schedules.find((s) => s.id === id);
+          const prevEv = findItemById(id);
+          const dateHint = prevEv ? prevEv.date : currentDate;
           lastUserMutationAt = Date.now();
-          const updated = await PlannerAPI.patchSchedule(id, payload, currentDate);
-          if (updated && updated.date === currentDate) {
-            schedules = PlannerAPI.sortSchedules(schedules.map((s) => (s.id === id ? updated : s)));
-            syncSwrCacheIfCurrent(currentDate, schedules);
-            renderAll();
-          } else {
-            await loadDay(dateVal === currentDate ? currentDate : dateVal, false);
+          const updated = await PlannerAPI.patchSchedule(id, payload, dateHint);
+          if (updated && (updated.date === null || updated.date === currentDate)) {
+            applyPatchedRecordToState(updated);
+          } else if (dateVal) {
+            await loadDay(dateVal, false);
           }
           if (prevEv) {
             const snapPatch = {
@@ -3909,17 +4321,15 @@
               memo: prevEv.memo || ""
             };
             pushUndoAction(`'${prevEv.title}' 수정`, async () => {
-              const reverted = await PlannerAPI.patchSchedule(id, snapPatch, snapPatch.date);
-              if (reverted && reverted.date === currentDate) {
-                schedules = PlannerAPI.sortSchedules(schedules.map((s) => (s.id === id ? reverted : s)));
-                syncSwrCacheIfCurrent(currentDate, schedules);
-                renderAll();
-              } else {
+              const reverted = await PlannerAPI.patchSchedule(id, snapPatch, payload.date);
+              if (reverted && (reverted.date === null || reverted.date === currentDate)) {
+                applyPatchedRecordToState(reverted);
+              } else if (snapPatch.date) {
                 await loadDay(snapPatch.date, false);
               }
             });
           }
-          showToast("일정을 수정했습니다.", "✏️");
+          showToast(isBacklog ? "나중에 할 일을 수정했습니다." : "일정을 수정했습니다.", "✏️");
         } else {
           await createScheduleAndRecord(
             {

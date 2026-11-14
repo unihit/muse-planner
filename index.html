@@ -13,7 +13,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-  <link rel="stylesheet" href="./css/style.css?v=20261114-53" />
+  <link rel="stylesheet" href="./css/style.css?v=20261114-54" />
 </head>
 <body>
   <!-- 로그인 화면 (가계부와 동일 Supabase Auth) -->
@@ -236,7 +236,10 @@
                   <span>📌 미배치 목록</span>
                   <span class="section-chevron" aria-hidden="true">▾</span>
                 </button>
-                <span id="untimedCount" class="mini-count">0</span>
+                <div class="section-title-actions">
+                  <button type="button" id="carryOverBtn" class="mini-btn carry-over-btn hidden" title="어제 완료하지 못한 미배치 할 일을 이 날짜로 가져옵니다">어제 이월</button>
+                  <span id="untimedCount" class="mini-count">0</span>
+                </div>
               </div>
               <div id="untimedList" class="card-stack"></div>
             </section>
@@ -253,6 +256,23 @@
                 </div>
               </div>
               <div id="placedList" class="card-stack"></div>
+            </section>
+
+            <section id="backlogSection" class="dock-section">
+              <div class="section-title-row">
+                <button type="button" id="backlogCollapseBtn" class="section-collapse-toggle" aria-expanded="true" title="나중에 할 일(백로그) 접기/펼치기">
+                  <span>📦 나중에 할 일</span>
+                  <span class="section-chevron" aria-hidden="true">▾</span>
+                </button>
+                <span id="backlogCount" class="mini-count">0</span>
+              </div>
+              <div class="dock-section-body">
+                <form id="addBacklogForm" class="backlog-add-form">
+                  <input id="newBacklogTitle" type="text" placeholder="나중에 할 일(백로그) 추가..." required />
+                  <button type="submit" class="mini-btn backlog-add-btn">+ 보관</button>
+                </form>
+                <div id="backlogList" class="card-stack"></div>
+              </div>
             </section>
 
             <section id="reminderSection" class="dock-section">
@@ -455,6 +475,10 @@
             </select>
           </label>
         </div>
+        <label class="inline-check">
+          <input id="editBacklogCheck" type="checkbox" />
+          <span>📦 날짜 미정 (나중에 할 일 백로그에 보관)</span>
+        </label>
         <div class="time-toggle-card">
           <label class="inline-check">
             <input id="editTimedCheck" type="checkbox" checked />
@@ -648,6 +672,10 @@
                 <input id="showPlacedListCheck" type="checkbox" checked />
                 <span>배치 목록 표시</span>
               </label>
+              <label class="settings-toggle">
+                <input id="showBacklogListCheck" type="checkbox" checked />
+                <span>나중에 할 일 표시</span>
+              </label>
             </div>
           </div>
 
@@ -830,8 +858,8 @@
   <!-- 토스트 알림 -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./js/api.js?v=20261114-53"></script>
-  <script src="./js/app.js?v=20261114-53"></script>
+  <script src="./js/api.js?v=20261114-54"></script>
+  <script src="./js/app.js?v=20261114-54"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
