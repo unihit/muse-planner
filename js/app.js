@@ -997,15 +997,23 @@
   function scrollTimelineToY(offsetY, smooth = true) {
     if (!el.timelineScroll || !el.timelineGrid) return;
     const clampedOffset = Math.max(0, offsetY);
-    if (el.timelineScroll.scrollHeight > el.timelineScroll.clientHeight + 2) {
-      el.timelineScroll.scrollTo({ top: clampedOffset, behavior: smooth ? "smooth" : "auto" });
-      return;
-    }
-    const gridTop = el.timelineGrid.getBoundingClientRect().top + window.scrollY;
-    window.scrollTo({
-      top: Math.max(0, gridTop + clampedOffset),
-      behavior: smooth ? "smooth" : "auto"
-    });
+    const performScroll = () => {
+      if (el.timelineScroll.scrollHeight > el.timelineScroll.clientHeight + 2) {
+        el.timelineScroll.scrollTo({ top: clampedOffset, behavior: smooth ? "smooth" : "auto" });
+        return;
+      }
+      const scroller = document.scrollingElement || document.documentElement;
+      const curScrollTop = window.scrollY || scroller.scrollTop || document.body.scrollTop || 0;
+      const headerOffset = document.querySelector(".top-header")?.offsetHeight || 56;
+      const gridTop = el.timelineGrid.getBoundingClientRect().top + curScrollTop;
+      const targetTop = Math.max(0, gridTop + clampedOffset - headerOffset - 12);
+      const behavior = smooth ? "smooth" : "auto";
+      window.scrollTo({ top: targetTop, behavior });
+      if (document.body.scrollHeight > document.body.clientHeight + 2 && document.body !== scroller) {
+        document.body.scrollTo({ top: targetTop, behavior });
+      }
+    };
+    requestAnimationFrame(performScroll);
   }
 
   function scrollToOptimalPosition(smooth = false) {

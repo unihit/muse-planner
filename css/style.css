@@ -3614,12 +3614,14 @@ html[data-theme="light"] .modal-backdrop {
 
 @media (max-width: 960px) {
   html, body {
-    overflow-x: hidden;
-    overflow-y: auto;
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
   }
   .app-shell {
     height: auto;
     min-height: 100vh;
+    overflow-x: clip;
     padding-bottom: calc(118px + env(safe-area-inset-bottom));
   }
   .top-header {
