@@ -1951,12 +1951,6 @@ html[data-theme="light"] .badge-reminder {
   font-weight: 700;
 }
 
-.q-btn.del:hover {
-  background: var(--now);
-  border-color: var(--now);
-  color: #fff;
-}
-
 /* 새 일정 모달 상단: 시간 미정 할 일 바로 넣기 */
 .modal-untimed-picker {
   display: flex;
@@ -2310,8 +2304,17 @@ html[data-theme="light"] .q-btn {
   border-color: var(--border);
 }
 
-.q-btn:hover {
+.q-btn:hover,
+html[data-theme="light"] .q-btn:hover {
   background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.q-btn.del:hover,
+html[data-theme="light"] .q-btn.del:hover {
+  background: var(--now);
+  border-color: var(--now);
   color: #fff;
 }
 
