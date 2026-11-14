@@ -3186,7 +3186,7 @@
       el.nowStartNowBtn.onclick = (e) => { e.stopPropagation(); startScheduleNow(nextEv); };
       el.nowJumpBtn.onclick = (e) => { e.stopPropagation(); jumpToSchedule(nextEv); };
     } else {
-      const completable = schedules.filter((e) => isItemCheckable(e));
+      const completable = schedules.filter((e) => e.type === "task");
       const doneCnt = completable.filter((e) => e.done).length;
       const donePct = completable.length ? Math.round((doneCnt / completable.length) * 100) : 100;
 
@@ -3232,12 +3232,12 @@
     if (activeEv && upNextEv) {
       el.islandNextInfo.innerHTML = `<span>다음 · <strong>${escapeHtml(upNextEv.title)}</strong></span><span>${minToTimeStr(upNextEv.startMin)}</span>`;
     } else if (!activeEv && nextEv) {
-      const remainCnt = schedules.filter((e) => isItemCheckable(e) && !e.done).length;
-      el.islandNextInfo.innerHTML = `<span>오늘 남은 미완료 항목</span><span>${remainCnt}건</span>`;
+      const remainCnt = schedules.filter((e) => e.type === "task" && !e.done).length;
+      el.islandNextInfo.innerHTML = `<span>오늘 남은 미완료 할 일</span><span>${remainCnt}건</span>`;
     } else {
-      const completable = schedules.filter((e) => isItemCheckable(e));
+      const completable = schedules.filter((e) => e.type === "task");
       const doneCnt = completable.filter((e) => e.done).length;
-      el.islandNextInfo.innerHTML = `<span>이후 예정된 일정 없음</span><span>${completable.length}건 중 ${doneCnt}건 완료</span>`;
+      el.islandNextInfo.innerHTML = `<span>이후 예정된 일정 없음</span><span>할 일 ${completable.length}건 중 ${doneCnt}건 완료</span>`;
     }
 
     const remEv =
@@ -3267,7 +3267,7 @@
   /* -------------------- 우측 요약 & 위젯 -------------------- */
 
   function renderRightWidgets() {
-    const completable = schedules.filter((e) => isItemCheckable(e));
+    const completable = schedules.filter((e) => e.type === "task");
     const doneCount = completable.filter((e) => e.done).length;
     const remainCount = completable.length - doneCount;
     const pct = completable.length ? Math.round((doneCount / completable.length) * 100) : 0;
@@ -3280,7 +3280,6 @@
     const todayStr = PlannerAPI.todayKst();
     const nowMin = getNowKstMinutes();
     const statsByType = {
-      schedule: { total: 0, done: 0 },
       task: { total: 0, done: 0 },
       reminder: { total: 0, done: 0 }
     };
@@ -3288,16 +3287,10 @@
       const bucket = statsByType[s.type];
       if (!bucket) continue;
       bucket.total += 1;
-      if (!isItemCheckable(s)) {
-        const refMin =
-          s.type === "reminder"
-            ? s.startMin
-            : s.hasEndAt && s.endMin !== null
-              ? s.endMin
-              : s.startMin + 30;
+      if (s.type === "reminder") {
         const passed =
           s.hasStartAt &&
-          (currentDate < todayStr || (currentDate === todayStr && refMin <= nowMin));
+          (currentDate < todayStr || (currentDate === todayStr && s.startMin <= nowMin));
         if (passed) bucket.done += 1;
       } else if (s.done) {
         bucket.done += 1;
@@ -3306,7 +3299,8 @@
 
     el.typeBreakdownBars.innerHTML = "";
     const breakdownFrag = document.createDocumentFragment();
-    for (const [key, meta] of Object.entries(TYPE_META)) {
+    for (const key of ["task", "reminder"]) {
+      const meta = TYPE_META[key];
       const { total, done } = statsByType[key] || { total: 0, done: 0 };
       const ratio = total ? Math.round((done / total) * 100) : 0;
       const row = document.createElement("div");
