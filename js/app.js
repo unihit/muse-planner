@@ -1469,7 +1469,7 @@
 
           card.innerHTML = `
             <div class="dock-card-top">
-              <input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />
+              ${item.type !== "reminder" ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
               <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
             </div>
             <div class="dock-card-meta">
@@ -1481,7 +1481,7 @@
             </div>
           `;
 
-          card.querySelector(".event-check").addEventListener("change", (e) => {
+          card.querySelector(".event-check")?.addEventListener("change", (e) => {
             toggleScheduleDone(item.id, e.target.checked);
           });
 
@@ -1559,7 +1559,7 @@
 
               card.innerHTML = `
                 <div class="dock-card-top">
-                  <input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />
+                  ${item.type !== "reminder" ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
                   <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
                 </div>
                 <div class="dock-card-meta">
@@ -1571,7 +1571,7 @@
                 </div>
               `;
 
-              card.querySelector(".event-check").addEventListener("change", (e) => {
+              card.querySelector(".event-check")?.addEventListener("change", (e) => {
                 toggleScheduleDone(item.id, e.target.checked);
               });
 
@@ -1614,15 +1614,9 @@
           card.className = `reminder-pill-card ${rem.done ? "is-done" : ""}`;
           card.dataset.id = rem.id;
           card.innerHTML = `
-            <input type="checkbox" class="event-check" ${rem.done ? "checked" : ""} title="완료 체크" />
             <span class="reminder-pill-time">${rem.hasStartAt ? minToTimeStr(rem.startMin) : "미정"}</span>
             <span class="reminder-pill-title" title="${escapeAttr(rem.title)}">${escapeHtml(rem.title)}</span>
           `;
-
-          card.querySelector(".event-check").addEventListener("click", (e) => e.stopPropagation());
-          card.querySelector(".event-check").addEventListener("change", (e) => {
-            toggleScheduleDone(rem.id, e.target.checked);
-          });
 
           card.querySelector(".reminder-pill-title").addEventListener("click", (e) => {
             e.stopPropagation();
@@ -1631,12 +1625,7 @@
 
           card.addEventListener("click", () => {
             if (rem.hasStartAt) {
-              el.timelineScroll.scrollTo({
-                top: Math.max(0, minToY(rem.startMin) - 80),
-                behavior: "smooth"
-              });
-              selectedEventId = rem.id;
-              renderEvents();
+              jumpToSchedule(rem);
             } else {
               openEventModal(rem.id);
             }
@@ -1868,7 +1857,6 @@
       pill.style.marginRight = `${staggerCol * 148}px`;
     }
     pill.innerHTML = `
-      <input type="checkbox" class="event-check" ${ev.done ? "checked" : ""} title="완료 체크" />
       <span class="reminder-marker-time">🔔 ${minToTimeStr(ev.startMin)}</span>
       <span class="reminder-marker-title">${escapeHtml(ev.title)}</span>
       <button type="button" class="reminder-marker-del" title="삭제" aria-label="알림 삭제">✕</button>
@@ -1879,12 +1867,6 @@
 
     marker.appendChild(line);
     marker.appendChild(pill);
-
-    pill.querySelector(".event-check").addEventListener("pointerdown", (e) => e.stopPropagation());
-    pill.querySelector(".event-check").addEventListener("change", (e) => {
-      e.stopPropagation();
-      toggleScheduleDone(ev.id, e.target.checked);
-    });
 
     pill.querySelector(".reminder-marker-del").addEventListener("pointerdown", (e) => e.stopPropagation());
     pill.querySelector(".reminder-marker-del").addEventListener("click", (e) => {
@@ -2601,7 +2583,7 @@
       el.nowExtendBtn.classList.remove("hidden");
       el.nowPlus30Btn.classList.remove("hidden");
       el.nowStartNowBtn.classList.add("hidden");
-      el.nowDoneBtn.classList.remove("hidden");
+      el.nowDoneBtn.classList.toggle("hidden", activeEv.type === "reminder");
 
       el.nowMinusBtn.onclick = (e) => { e.stopPropagation(); handleQuickAction(activeEv.id, "minus15"); };
       el.nowExtendBtn.onclick = (e) => { e.stopPropagation(); handleQuickAction(activeEv.id, "plus15"); };
