@@ -1580,6 +1580,134 @@ html[data-theme="light"] .event-block.type-reminder {
   color: #78350f;
   box-shadow: 0 4px 14px rgba(217, 119, 6, 0.14);
 }
+
+/* 알림(reminder) 전용 타임라인 오버레이 마커 라인 */
+.reminder-line-marker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  z-index: 24;
+  pointer-events: none;
+}
+
+.reminder-marker-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 0;
+  border-top: 2px dashed rgba(245, 158, 11, 0.85);
+  pointer-events: none;
+}
+
+.reminder-marker-line::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--type-reminder);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+}
+
+.reminder-marker-pill {
+  position: absolute;
+  right: 6px;
+  top: 0;
+  transform: translateY(-50%);
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(260px, calc(100% - 16px));
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(34, 25, 12, 0.94);
+  border: 1.5px solid rgba(245, 158, 11, 0.88);
+  color: #fef3c7;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease;
+}
+
+html[data-theme="light"] .reminder-marker-pill {
+  background: #fffbeb;
+  border-color: #d97706;
+  color: #78350f;
+  box-shadow: 0 3px 10px rgba(217, 119, 6, 0.18);
+}
+
+.reminder-marker-pill .event-check {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--type-reminder);
+  cursor: pointer;
+}
+
+.reminder-marker-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: #fbbf24;
+}
+
+html[data-theme="light"] .reminder-marker-time {
+  color: #b45309;
+}
+
+.reminder-marker-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reminder-marker-del {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.65;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.reminder-marker-del:hover {
+  opacity: 1;
+  color: var(--now);
+}
+
+.reminder-line-marker.is-done {
+  opacity: 0.52;
+}
+
+.reminder-line-marker.is-done .reminder-marker-title {
+  text-decoration: line-through;
+}
+
+.reminder-line-marker.is-filtered-out {
+  opacity: 0.18;
+}
+
+.reminder-line-marker.is-dragging {
+  z-index: 40;
+}
+
+.reminder-line-marker.is-dragging .reminder-marker-pill {
+  cursor: grabbing;
+  transform: translateY(-50%) scale(1.03);
+  box-shadow: 0 8px 20px rgba(245, 158, 11, 0.35);
+}
 html[data-theme="light"] .event-sub-row {
   color: #475569;
 }

@@ -461,7 +461,9 @@
   function findNextAvailableSlot(durationMin = getDefaultDurationMin()) {
     const earlyEndMin = getEarlyEndMin();
     const step = prefs.snapMin || 15;
-    const timed = schedules.filter((e) => e.hasStartAt).sort((a, b) => a.startMin - b.startMin);
+    const timed = schedules
+      .filter((e) => e.hasStartAt && e.type !== "reminder")
+      .sort((a, b) => a.startMin - b.startMin);
     const startSearch = isViewingToday()
       ? Math.max(earlyEndMin, Math.ceil(getNowKstMinutes() / step) * step)
       : 540;
@@ -837,14 +839,14 @@
         ? PlannerAPI.kstMinutesToIso(ev.date, nextEndMinOrNull)
         : null;
 
-    // 연쇄 밀기 대상 계산
+    // 연쇄 밀기 대상 계산 (알림은 시점 마커이므로 연쇄 밀기 대상/트리거에서 제외)
     const cascadePatches = [];
-    if (prefs.cascadeMode && nextStartMin !== null && !hasCustomStart) {
+    if (prefs.cascadeMode && ev.type !== "reminder" && nextStartMin !== null && !hasCustomStart) {
       const movedAnchorVisualEnd =
         nextEndMinOrNull !== null ? nextEndMinOrNull : Math.min(1440, nextStartMin + 30);
       let cursor = movedAnchorVisualEnd;
       const others = schedules
-        .filter((s) => s.id !== ev.id && s.hasStartAt && !s.done)
+        .filter((s) => s.id !== ev.id && s.hasStartAt && !s.done && s.type !== "reminder")
         .sort((a, b) => a.startMin - b.startMin);
 
       for (const item of others) {
@@ -1249,7 +1251,11 @@
       }
 
       const earlyCount = schedules.filter(
-        (e) => e.hasStartAt && e.visualEndMin > earlyStartMin && e.startMin < earlyEndMin
+        (e) =>
+          e.hasStartAt &&
+          (e.type === "reminder"
+            ? e.startMin >= earlyStartMin && e.startMin < earlyEndMin
+            : e.visualEndMin > earlyStartMin && e.startMin < earlyEndMin)
       ).length;
       const banner = document.createElement("div");
       banner.className = "early-collapsed-banner";
@@ -1275,13 +1281,24 @@
 
     const timedEvents = schedules.filter((ev) => {
       if (!ev.hasStartAt) return false;
-      if (prefs.earlyCollapsed && ev.startMin >= earlyStartMin && ev.visualEndMin <= earlyEndMin) return false;
+      if (prefs.earlyCollapsed) {
+        if (ev.type === "reminder") {
+          if (ev.startMin >= earlyStartMin && ev.startMin < earlyEndMin) return false;
+        } else if (ev.startMin >= earlyStartMin && ev.visualEndMin <= earlyEndMin) {
+          return false;
+        }
+      }
       return true;
     });
 
-    const cols = computeEventColumns(timedEvents);
+    const blockEvents = timedEvents.filter((ev) => ev.type !== "reminder");
+    const reminderEvents = timedEvents
+      .filter((ev) => ev.type === "reminder")
+      .sort((a, b) => a.startMin - b.startMin);
 
-    for (const ev of timedEvents) {
+    const cols = computeEventColumns(blockEvents);
+
+    for (const ev of blockEvents) {
       const visualStart =
         prefs.earlyCollapsed && ev.startMin >= earlyStartMin && ev.startMin < earlyEndMin
           ? earlyEndMin
@@ -1384,6 +1401,153 @@
       bindEventPointerInteractions(block, ev);
       el.eventsLayer.appendChild(block);
     }
+
+    // 알림(reminder)은 블록이 아닌 독립 오버레이 마커 라인으로 렌더링
+    let prevRemTop = -999;
+    let staggerCol = 0;
+    for (const rem of reminderEvents) {
+      const top = minToY(rem.startMin);
+      if (Math.abs(top - prevRemTop) < 24) {
+        staggerCol = (staggerCol + 1) % 2;
+      } else {
+        staggerCol = 0;
+      }
+      prevRemTop = top;
+      renderReminderMarker(rem, top, staggerCol);
+    }
+  }
+
+  function renderReminderMarker(ev, top, staggerCol = 0) {
+    const { isNow, isPast } = getEventTimeState(ev);
+    const isFilteredOut = activeTypeFilter !== "all" && ev.type !== activeTypeFilter;
+
+    const marker = document.createElement("div");
+    marker.className = [
+      "reminder-line-marker",
+      isNow ? "is-now" : "",
+      isPast ? "is-past" : "",
+      ev.done ? "is-done" : "",
+      isFilteredOut ? "is-filtered-out" : ""
+    ]
+      .filter(Boolean)
+      .join(" ");
+    marker.dataset.id = ev.id;
+    marker.style.top = `${top}px`;
+
+    const pill = document.createElement("div");
+    pill.className = "reminder-marker-pill";
+    if (staggerCol > 0) {
+      pill.style.marginRight = `${staggerCol * 148}px`;
+    }
+    pill.innerHTML = `
+      <input type="checkbox" class="event-check" ${ev.done ? "checked" : ""} title="완료 체크" />
+      <span class="reminder-marker-time">🔔 ${minToTimeStr(ev.startMin)}</span>
+      <span class="reminder-marker-title">${escapeHtml(ev.title)}</span>
+      <button type="button" class="reminder-marker-del" title="삭제" aria-label="알림 삭제">✕</button>
+    `;
+
+    const line = document.createElement("div");
+    line.className = "reminder-marker-line";
+
+    marker.appendChild(line);
+    marker.appendChild(pill);
+
+    pill.querySelector(".event-check").addEventListener("pointerdown", (e) => e.stopPropagation());
+    pill.querySelector(".event-check").addEventListener("change", (e) => {
+      e.stopPropagation();
+      toggleScheduleDone(ev.id, e.target.checked);
+    });
+
+    pill.querySelector(".reminder-marker-del").addEventListener("pointerdown", (e) => e.stopPropagation());
+    pill.querySelector(".reminder-marker-del").addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteScheduleById(ev.id);
+    });
+
+    bindReminderMarkerInteractions(marker, pill, ev);
+    el.eventsLayer.appendChild(marker);
+  }
+
+  function bindReminderMarkerInteractions(marker, pill, ev) {
+    const timeLabel = pill.querySelector(".reminder-marker-time");
+    pill.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 && e.pointerType === "mouse") return;
+      if (e.target.closest("input, button")) return;
+      e.stopPropagation();
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const origStart = ev.startMin;
+      const origTop = minToY(origStart);
+      const minBound = getTimelineMinBound();
+      let previewStart = origStart;
+      let dragged = false;
+      let droppingToDock = false;
+
+      const cleanup = () => {
+        marker.classList.remove("is-dragging");
+        el.stagingDock?.classList.remove("drop-highlight");
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+      };
+
+      const onMove = (mv) => {
+        const dx = mv.clientX - startX;
+        const dy = mv.clientY - startY;
+        if (!dragged && Math.hypot(dx, dy) > 5) {
+          dragged = true;
+          marker.classList.add("is-dragging");
+        }
+        if (!dragged) return;
+        mv.preventDefault();
+
+        const dockRect = el.stagingDock?.getBoundingClientRect();
+        droppingToDock = Boolean(
+          dockRect &&
+            mv.clientX >= dockRect.left &&
+            mv.clientX <= dockRect.right &&
+            mv.clientY >= dockRect.top &&
+            mv.clientY <= dockRect.bottom
+        );
+        el.stagingDock?.classList.toggle("drop-highlight", droppingToDock);
+
+        const nextY = origTop + dy;
+        previewStart = clamp(snap(yToMin(nextY)), minBound, 1439);
+        marker.style.top = `${minToY(previewStart)}px`;
+        if (timeLabel) timeLabel.textContent = `🔔 ${minToTimeStr(previewStart)}`;
+      };
+
+      const onCancel = () => {
+        cleanup();
+        renderEvents();
+      };
+
+      const onUp = async () => {
+        cleanup();
+        if (!dragged) {
+          openEventModal(ev.id);
+          return;
+        }
+        if (droppingToDock) {
+          await commitScheduleTimeChange(ev, null, null, {
+            customStartIso: null,
+            customEndIso: null
+          });
+          showToast("시간 미정 목록으로 옮겼습니다.", "📥");
+          return;
+        }
+        if (previewStart !== origStart) {
+          await commitScheduleTimeChange(ev, previewStart, null);
+        } else {
+          renderEvents();
+        }
+      };
+
+      window.addEventListener("pointermove", onMove, { passive: false });
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+    });
   }
 
   async function handleQuickAction(eventId, action) {
