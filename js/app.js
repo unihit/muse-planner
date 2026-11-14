@@ -520,18 +520,149 @@
     return `${y}-${m}-${d}`;
   }
 
+  const holidayYearCache = new Map();
+  let lunarFormatter = null;
+  try {
+    lunarFormatter = new Intl.DateTimeFormat("en-u-ca-chinese", {
+      timeZone: "UTC",
+      month: "numeric",
+      day: "numeric",
+    });
+  } catch {
+    lunarFormatter = null;
+  }
+
+  function getLunarMonthDay(utcDate) {
+    if (!lunarFormatter) return null;
+    try {
+      const parts = lunarFormatter.formatToParts(utcDate);
+      const m = parts.find((p) => p.type === "month")?.value;
+      const d = parts.find((p) => p.type === "day")?.value;
+      if (!m || !d || /bis/i.test(m)) return null;
+      return `${Number(m)}-${Number(d)}`;
+    } catch {
+      return null;
+    }
+  }
+
+  function getKoreanHolidaysForYear(year) {
+    if (holidayYearCache.has(year)) return holidayYearCache.get(year);
+
+    const holidays = new Map();
+    const solarFixed = [
+      ["01-01", "신정", false],
+      ["03-01", "삼일절", true],
+      ["05-05", "어린이날", true],
+      ["06-06", "현충일", false],
+      ["08-15", "광복절", true],
+      ["10-03", "개천절", true],
+      ["10-09", "한글날", true],
+      ["12-25", "성탄절", true],
+    ];
+
+    const subCandidates = [];
+    for (const [md, name, hasSub] of solarFixed) {
+      const ymd = `${year}-${md}`;
+      holidays.set(ymd, name);
+      if (hasSub) {
+        const dow = parseDateParts(ymd).dow;
+        if (dow === 0 || dow === 6) subCandidates.push(ymd);
+      }
+    }
+
+    // 음력 공휴일(설날·부처님오신날·추석)은 연초/연말 전후 포함 스캔
+    const scanStart = Date.UTC(year - 1, 11, 20);
+    const scanEnd = Date.UTC(year + 1, 0, 10);
+    const addLunarHoliday = (ymd, name) => {
+      if (!ymd.startsWith(`${year}-`)) return;
+      const prev = holidays.get(ymd);
+      holidays.set(ymd, prev ? `${prev} · ${name}` : name);
+    };
+
+    const seollalDays = [];
+    const chuseokDays = [];
+    for (let ts = scanStart; ts <= scanEnd; ts += 86400000) {
+      const dt = new Date(ts);
+      const md = getLunarMonthDay(dt);
+      if (md === "1-1") {
+        const prevYmd = formatYmd(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate() - 1);
+        const curYmd = formatYmd(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+        const nextYmd = formatYmd(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate() + 1);
+        addLunarHoliday(prevYmd, "설날 연휴");
+        addLunarHoliday(curYmd, "설날");
+        addLunarHoliday(nextYmd, "설날 연휴");
+        seollalDays.push(prevYmd, curYmd, nextYmd);
+      } else if (md === "4-8") {
+        const curYmd = formatYmd(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+        addLunarHoliday(curYmd, "부처님오신날");
+        if (curYmd.startsWith(`${year}-`)) {
+          const dow = new Date(ts).getUTCDay();
+          if (dow === 0 || dow === 6) subCandidates.push(curYmd);
+        }
+      } else if (md === "8-15") {
+        const prevYmd = formatYmd(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate() - 1);
+        const curYmd = formatYmd(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+        const nextYmd = formatYmd(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate() + 1);
+        addLunarHoliday(prevYmd, "추석 연휴");
+        addLunarHoliday(curYmd, "추석");
+        addLunarHoliday(nextYmd, "추석 연휴");
+        chuseokDays.push(prevYmd, curYmd, nextYmd);
+      }
+    }
+
+    // 설날·추석 연휴는 일요일과 겹칠 때 대체공휴일 적용
+    [seollalDays, chuseokDays].forEach((group) => {
+      const hasSunday = group.some((d) => d.startsWith(`${year}-`) && parseDateParts(d).dow === 0);
+      if (hasSunday) {
+        const last = group.filter((d) => d.startsWith(`${year}-`)).pop();
+        if (last) subCandidates.push(last);
+      }
+    });
+
+    // 대체공휴일 배정 (해당일 이후 첫 번째 비공휴일 평일)
+    subCandidates.sort();
+    for (const baseYmd of subCandidates) {
+      const p = parseDateParts(baseYmd);
+      for (let offset = 1; offset <= 10; offset++) {
+        const candYmd = formatYmd(p.year, p.monthIdx, p.day + offset);
+        if (!candYmd.startsWith(`${year}-`)) break;
+        const cDow = parseDateParts(candYmd).dow;
+        if (cDow !== 0 && cDow !== 6 && !holidays.has(candYmd)) {
+          holidays.set(candYmd, "대체공휴일");
+          break;
+        }
+      }
+    }
+
+    holidayYearCache.set(year, holidays);
+    return holidays;
+  }
+
+  function getKoreanHolidayName(dateStr) {
+    if (!dateStr) return "";
+    const { year } = parseDateParts(dateStr);
+    return getKoreanHolidaysForYear(year).get(dateStr) || "";
+  }
+
   function updateDateDisplay(dateStr) {
     if (el.datePicker) el.datePicker.value = dateStr;
     const { year, month, day, dow } = parseDateParts(dateStr);
+    const holidayName = getKoreanHolidayName(dateStr);
     if (el.dateDisplayText) {
       el.dateDisplayText.textContent = `${year}. ${String(month).padStart(2, "0")}. ${String(day).padStart(2, "0")}`;
     }
     if (el.dateWeekdayBadge) {
-      el.dateWeekdayBadge.textContent = `(${CAL_WEEKDAY_LABELS[dow]})`;
+      el.dateWeekdayBadge.textContent = holidayName
+        ? `(${CAL_WEEKDAY_LABELS[dow]} · ${holidayName})`
+        : `(${CAL_WEEKDAY_LABELS[dow]})`;
     }
     if (el.datePickerBtn) {
-      el.datePickerBtn.classList.toggle("is-sat", dow === 6);
-      el.datePickerBtn.classList.toggle("is-sun", dow === 0);
+      el.datePickerBtn.classList.toggle("is-holiday", Boolean(holidayName));
+      el.datePickerBtn.classList.toggle("is-sat", dow === 6 && !holidayName);
+      el.datePickerBtn.classList.toggle("is-sun", dow === 0 || Boolean(holidayName));
+      el.datePickerBtn.title = holidayName
+        ? `${dateStr} (${CAL_WEEKDAY_LABELS[dow]}) · ${holidayName}`
+        : "달력에서 날짜 선택";
     }
     if (el.calendarPopover && !el.calendarPopover.classList.contains("hidden")) {
       renderCalendarPopover();
@@ -559,17 +690,25 @@
       const cDay = cellDate.getUTCDate();
       const cDow = cellDate.getUTCDay();
       const cellStr = formatYmd(cYear, cMonthIdx, cDay);
+      const holidayName = getKoreanHolidayName(cellStr);
 
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "cal-day-btn";
-      if (cDow === 6) btn.classList.add("is-sat");
-      if (cDow === 0) btn.classList.add("is-sun");
+      if (holidayName) {
+        btn.classList.add("is-holiday", "is-sun");
+      } else if (cDow === 6) {
+        btn.classList.add("is-sat");
+      } else if (cDow === 0) {
+        btn.classList.add("is-sun");
+      }
       if (cMonthIdx !== monthIdx) btn.classList.add("is-other-month");
       if (cellStr === todayStr) btn.classList.add("is-today");
       if (cellStr === currentDate) btn.classList.add("is-selected");
       btn.textContent = String(cDay);
-      btn.title = `${cellStr} (${CAL_WEEKDAY_LABELS[cDow]})`;
+      btn.title = holidayName
+        ? `${cellStr} (${CAL_WEEKDAY_LABELS[cDow]}) · ${holidayName}`
+        : `${cellStr} (${CAL_WEEKDAY_LABELS[cDow]})`;
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         closeCalendarPopover();
