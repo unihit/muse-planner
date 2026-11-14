@@ -400,8 +400,9 @@
       .join("\n");
   }
 
-  function isAutoSyncPaused() {
-    if (document.hidden || isBackgroundSyncing || activeHtmlDragPayload || activePointerDrag) return true;
+  function isAutoSyncPaused(options = {}) {
+    if (!options.ignoreInFlight && isBackgroundSyncing) return true;
+    if (document.hidden || activeHtmlDragPayload || activePointerDrag) return true;
     if (Date.now() - lastUserMutationAt < 2500) return true;
     if (document.querySelector(".modal-backdrop:not(.hidden)")) return true;
     const s = PlannerAPI.getSettings();
@@ -423,6 +424,13 @@
         }, 2600 - mutationElapsed);
         return;
       }
+      if (isBackgroundSyncing) {
+        clearTimeout(deferredBroadcastSyncTimer);
+        deferredBroadcastSyncTimer = setTimeout(() => {
+          syncIfChanged(showNotify, { force: true, fromBroadcast: true });
+        }, 300);
+        return;
+      }
     }
 
     if (isAutoSyncPaused()) return;
@@ -433,7 +441,7 @@
 
     try {
       const fresh = await PlannerAPI.fetchSchedules(targetDate);
-      if (targetDate !== currentDate || isAutoSyncPaused()) return;
+      if (targetDate !== currentDate || isAutoSyncPaused({ ignoreInFlight: true })) return;
 
       if (getScheduleSignature(fresh) !== getScheduleSignature(schedules)) {
         schedules = fresh;
