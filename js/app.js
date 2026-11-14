@@ -152,7 +152,6 @@
     presetDuration: document.getElementById("presetDuration"),
     presetDurMinusBtn: document.getElementById("presetDurMinusBtn"),
     presetDurPlusBtn: document.getElementById("presetDurPlusBtn"),
-    presetDurLabel: document.getElementById("presetDurLabel"),
     presetType: document.getElementById("presetType"),
     presetSubmitBtn: document.getElementById("presetSubmitBtn"),
     presetCancelEditBtn: document.getElementById("presetCancelEditBtn"),
@@ -2779,8 +2778,18 @@
   function setPresetDurationValue(mins) {
     const num = Number(mins);
     const snapped = Number.isFinite(num) ? clamp(Math.round(num / 5) * 5, 0, 240) : 30;
-    if (el.presetDuration) el.presetDuration.value = String(snapped);
-    if (el.presetDurLabel) el.presetDurLabel.textContent = snapped > 0 ? `${snapped}분` : "시작만";
+    const durStr = String(snapped);
+    if (el.presetDuration) {
+      const hasOption = [...el.presetDuration.options].some((o) => o.value === durStr);
+      if (!hasOption) {
+        const opt = document.createElement("option");
+        opt.value = durStr;
+        opt.textContent = snapped > 0 ? `${snapped}분` : "시작만";
+        const nextOpt = [...el.presetDuration.options].find((o) => Number(o.value) > snapped);
+        el.presetDuration.insertBefore(opt, nextOpt || null);
+      }
+      el.presetDuration.value = durStr;
+    }
     if (el.presetDurMinusBtn) el.presetDurMinusBtn.disabled = snapped <= 0;
     if (el.presetDurPlusBtn) el.presetDurPlusBtn.disabled = snapped >= 240;
   }
@@ -3706,6 +3715,9 @@
     });
     el.presetDurPlusBtn?.addEventListener("click", () => {
       setPresetDurationValue((Number(el.presetDuration?.value) || 0) + 5);
+    });
+    el.presetDuration?.addEventListener("change", (e) => {
+      setPresetDurationValue(e.target.value);
     });
 
     el.addPresetForm.addEventListener("submit", (e) => {
