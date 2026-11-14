@@ -150,6 +150,8 @@
     presetIcon: document.getElementById("presetIcon"),
     presetTitle: document.getElementById("presetTitle"),
     presetDuration: document.getElementById("presetDuration"),
+    presetDurationSelect: document.getElementById("presetDurationSelect"),
+    presetDurLabel: document.getElementById("presetDurLabel"),
     presetDurMinusBtn: document.getElementById("presetDurMinusBtn"),
     presetDurPlusBtn: document.getElementById("presetDurPlusBtn"),
     presetType: document.getElementById("presetType"),
@@ -2788,16 +2790,15 @@
     const num = Number(mins);
     const snapped = Number.isFinite(num) ? clamp(Math.round(num / 5) * 5, 0, 240) : 30;
     const durStr = String(snapped);
-    if (el.presetDuration) {
-      const hasOption = [...el.presetDuration.options].some((o) => o.value === durStr);
-      if (!hasOption) {
-        const opt = document.createElement("option");
-        opt.value = durStr;
-        opt.textContent = snapped > 0 ? `${snapped}분` : "시작만";
-        const nextOpt = [...el.presetDuration.options].find((o) => Number(o.value) > snapped);
-        el.presetDuration.insertBefore(opt, nextOpt || null);
+    if (el.presetDuration) el.presetDuration.value = durStr;
+    if (el.presetDurLabel) el.presetDurLabel.textContent = snapped > 0 ? `${snapped}분` : "시작만";
+    if (el.presetDurationSelect) {
+      const hasOption = [...el.presetDurationSelect.options].some((o) => o.value === durStr);
+      if (hasOption) {
+        el.presetDurationSelect.value = durStr;
+      } else {
+        el.presetDurationSelect.selectedIndex = -1;
       }
-      el.presetDuration.value = durStr;
     }
     if (el.presetDurMinusBtn) el.presetDurMinusBtn.disabled = snapped <= 0;
     if (el.presetDurPlusBtn) el.presetDurPlusBtn.disabled = snapped >= 240;
@@ -3727,7 +3728,7 @@
     el.presetDurPlusBtn?.addEventListener("click", () => {
       setPresetDurationValue((Number(el.presetDuration?.value) || 0) + 5);
     });
-    el.presetDuration?.addEventListener("change", (e) => {
+    el.presetDurationSelect?.addEventListener("change", (e) => {
       setPresetDurationValue(e.target.value);
     });
 
