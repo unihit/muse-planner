@@ -1559,26 +1559,46 @@ html[data-theme="light"] .badge-reminder {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+}
+
+.inline-check input[type="checkbox"],
+.checkbox-row-inline input[type="checkbox"],
+.inline-check-sm input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
 }
 
 .end-label-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+}
+
+.end-label-row > label:first-child {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 .inline-check-sm {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   font-size: 11px;
   font-weight: 500;
   color: var(--text-muted);
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* 상/하단 리사이즈 핸들 */
@@ -2042,7 +2062,7 @@ html[data-theme="light"] .modal-backdrop {
   color: var(--text-muted);
 }
 
-.field input,
+.field input:not([type="checkbox"]):not([type="radio"]),
 .field select,
 .field textarea {
   width: 100%;
@@ -2584,12 +2604,26 @@ html[data-theme="light"] .modal-backdrop {
     flex-direction: column;
     gap: 8px;
   }
-  .field input,
+  .field input:not([type="checkbox"]):not([type="radio"]),
   .field select,
   .field textarea,
   .quick-add-box input,
   .quick-add-row select {
     font-size: 16px;
+  }
+  .inline-check,
+  .checkbox-row-inline {
+    font-size: 13px;
+    padding: 2px 0;
+  }
+  .inline-check-sm {
+    font-size: 12px;
+  }
+  .inline-check input[type="checkbox"],
+  .checkbox-row-inline input[type="checkbox"],
+  .inline-check-sm input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
   }
   .modal-footer {
     flex-wrap: wrap;
