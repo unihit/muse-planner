@@ -150,6 +150,9 @@
     presetIcon: document.getElementById("presetIcon"),
     presetTitle: document.getElementById("presetTitle"),
     presetDuration: document.getElementById("presetDuration"),
+    presetDurMinusBtn: document.getElementById("presetDurMinusBtn"),
+    presetDurPlusBtn: document.getElementById("presetDurPlusBtn"),
+    presetDurLabel: document.getElementById("presetDurLabel"),
     presetType: document.getElementById("presetType"),
     presetSubmitBtn: document.getElementById("presetSubmitBtn"),
     presetCancelEditBtn: document.getElementById("presetCancelEditBtn"),
@@ -2773,11 +2776,20 @@
 
   /* -------------------- 모달: 커스텀 프리셋 -------------------- */
 
+  function setPresetDurationValue(mins) {
+    const num = Number(mins);
+    const snapped = Number.isFinite(num) ? clamp(Math.round(num / 5) * 5, 0, 240) : 30;
+    if (el.presetDuration) el.presetDuration.value = String(snapped);
+    if (el.presetDurLabel) el.presetDurLabel.textContent = snapped > 0 ? `${snapped}분` : "시작만";
+    if (el.presetDurMinusBtn) el.presetDurMinusBtn.disabled = snapped <= 0;
+    if (el.presetDurPlusBtn) el.presetDurPlusBtn.disabled = snapped >= 240;
+  }
+
   function resetPresetForm() {
     if (el.presetEditId) el.presetEditId.value = "";
     if (el.presetIcon) el.presetIcon.value = "⚡";
     if (el.presetTitle) el.presetTitle.value = "";
-    if (el.presetDuration) el.presetDuration.value = "30";
+    setPresetDurationValue(30);
     if (el.presetType) el.presetType.value = "schedule";
     if (el.presetSubmitBtn) el.presetSubmitBtn.textContent = "추가";
     if (el.presetCancelEditBtn) el.presetCancelEditBtn.classList.add("hidden");
@@ -2789,17 +2801,7 @@
     if (el.presetEditId) el.presetEditId.value = p.id;
     if (el.presetIcon) el.presetIcon.value = p.icon || "⚡";
     if (el.presetTitle) el.presetTitle.value = p.title || "";
-    if (el.presetDuration) {
-      const durStr = String(Number(p.durationMin || 0));
-      const hasOption = [...el.presetDuration.options].some((o) => o.value === durStr);
-      if (!hasOption) {
-        const opt = document.createElement("option");
-        opt.value = durStr;
-        opt.textContent = Number(durStr) > 0 ? `${durStr}분` : "시작만";
-        el.presetDuration.appendChild(opt);
-      }
-      el.presetDuration.value = durStr;
-    }
+    setPresetDurationValue(Number(p.durationMin || 0));
     if (el.presetType) el.presetType.value = p.type || "schedule";
     if (el.presetSubmitBtn) el.presetSubmitBtn.textContent = "저장";
     if (el.presetCancelEditBtn) el.presetCancelEditBtn.classList.remove("hidden");
@@ -3697,6 +3699,13 @@
 
     el.presetCancelEditBtn?.addEventListener("click", () => {
       resetPresetForm();
+    });
+
+    el.presetDurMinusBtn?.addEventListener("click", () => {
+      setPresetDurationValue((Number(el.presetDuration?.value) || 0) - 5);
+    });
+    el.presetDurPlusBtn?.addEventListener("click", () => {
+      setPresetDurationValue((Number(el.presetDuration?.value) || 0) + 5);
     });
 
     el.addPresetForm.addEventListener("submit", (e) => {

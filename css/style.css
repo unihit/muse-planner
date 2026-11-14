@@ -2989,6 +2989,52 @@ html[data-theme="light"] .modal-backdrop {
   min-width: 120px;
 }
 
+.preset-duration-stepper {
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  height: 30px;
+}
+
+.preset-duration-stepper .stepper-btn {
+  width: 26px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.14s ease;
+}
+
+.preset-duration-stepper .stepper-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.preset-duration-stepper .stepper-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.preset-duration-stepper .stepper-val {
+  min-width: 46px;
+  padding: 0 6px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  line-height: 28px;
+}
+
 .icon-input {
   width: 40px;
   text-align: center;
