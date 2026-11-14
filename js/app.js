@@ -302,7 +302,37 @@
   }
 
   function getTimelineMinBound() {
-    return prefs.earlyCollapsed && getEarlyStartMin() === 0 ? getEarlyEndMin() : 0;
+    return 0;
+  }
+
+  function toDisplayMin(min) {
+    const earlyEndMin = getEarlyEndMin();
+    if (min >= earlyEndMin) return min - earlyEndMin;
+    return 1440 - earlyEndMin + min;
+  }
+
+  function fromDisplayMin(d) {
+    const earlyEndMin = getEarlyEndMin();
+    const daySpan = 1440 - earlyEndMin;
+    if (d < daySpan) return earlyEndMin + d;
+    return d - daySpan;
+  }
+
+  function displayMinToY(d) {
+    if (!prefs.earlyCollapsed) {
+      return d * prefs.pxPerMin;
+    }
+    const earlyStartMin = getEarlyStartMin();
+    const earlyEndMin = getEarlyEndMin();
+    const dCollapseStart = 1440 - earlyEndMin + earlyStartMin;
+    if (d <= dCollapseStart) {
+      return d * prefs.pxPerMin;
+    }
+    const collapsedSpan = Math.max(1, 1440 - dCollapseStart);
+    return (
+      dCollapseStart * prefs.pxPerMin +
+      ((d - dCollapseStart) / collapsedSpan) * COLLAPSED_EARLY_HEIGHT
+    );
   }
 
   function getDefaultDurationMin() {
@@ -311,38 +341,29 @@
   }
 
   function minToY(min) {
-    if (!prefs.earlyCollapsed) {
-      return min * prefs.pxPerMin;
-    }
-    const earlyStartMin = getEarlyStartMin();
+    return displayMinToY(toDisplayMin(min));
+  }
+
+  function endMinToY(endMin, startMin) {
     const earlyEndMin = getEarlyEndMin();
-    if (min <= earlyStartMin) {
-      return min * prefs.pxPerMin;
+    if (startMin < earlyEndMin && endMin >= earlyEndMin) {
+      return displayMinToY(1440);
     }
-    if (min < earlyEndMin) {
-      return (
-        earlyStartMin * prefs.pxPerMin +
-        ((min - earlyStartMin) / (earlyEndMin - earlyStartMin)) * COLLAPSED_EARLY_HEIGHT
-      );
-    }
-    return earlyStartMin * prefs.pxPerMin + COLLAPSED_EARLY_HEIGHT + (min - earlyEndMin) * prefs.pxPerMin;
+    return displayMinToY(toDisplayMin(endMin));
   }
 
   function yToMin(y) {
-    if (!prefs.earlyCollapsed) {
-      return clamp(y / prefs.pxPerMin, 0, 1440);
-    }
     const earlyStartMin = getEarlyStartMin();
     const earlyEndMin = getEarlyEndMin();
-    const collapsedTop = earlyStartMin * prefs.pxPerMin;
-    const collapsedBottom = collapsedTop + COLLAPSED_EARLY_HEIGHT;
+    if (!prefs.earlyCollapsed) {
+      return fromDisplayMin(clamp(y / prefs.pxPerMin, 0, 1440));
+    }
+    const dCollapseStart = 1440 - earlyEndMin + earlyStartMin;
+    const collapsedTop = dCollapseStart * prefs.pxPerMin;
     if (y < collapsedTop) {
-      return clamp(y / prefs.pxPerMin, 0, earlyStartMin);
+      return fromDisplayMin(clamp(y / prefs.pxPerMin, 0, dCollapseStart));
     }
-    if (y <= collapsedBottom) {
-      return earlyEndMin;
-    }
-    return clamp(earlyEndMin + (y - collapsedBottom) / prefs.pxPerMin, earlyEndMin, 1440);
+    return earlyStartMin;
   }
 
   function getTimelineTotalHeight() {
@@ -1176,6 +1197,10 @@
       el.hourRowsLayer.appendChild(row);
     };
 
+    for (let h = earlyEndHour; h < 24; h++) {
+      appendHourRow(h);
+    }
+
     if (prefs.earlyCollapsed) {
       for (let h = 0; h < earlyStartHour; h++) {
         appendHourRow(h);
@@ -1194,12 +1219,8 @@
         renderAll();
       });
       el.hourRowsLayer.appendChild(banner);
-
-      for (let h = earlyEndHour; h < 24; h++) {
-        appendHourRow(h);
-      }
     } else {
-      for (let h = 0; h < 24; h++) {
+      for (let h = 0; h < earlyEndHour; h++) {
         appendHourRow(h);
       }
     }
@@ -1223,8 +1244,10 @@
         prefs.earlyCollapsed && ev.startMin >= earlyStartMin && ev.startMin < earlyEndMin
           ? earlyEndMin
           : ev.startMin;
+      const visualEnd =
+        ev.startMin < earlyEndMin && ev.visualEndMin > earlyEndMin ? earlyEndMin : ev.visualEndMin;
       const top = minToY(visualStart);
-      const bottom = minToY(ev.visualEndMin);
+      const bottom = endMinToY(visualEnd, visualStart);
       const height = Math.max(26, bottom - top);
       const isCompact = height < 40;
 
@@ -1376,7 +1399,7 @@
     const visualStart =
       prefs.earlyCollapsed && startMin >= earlyStartMin && startMin < earlyEndMin ? earlyEndMin : startMin;
     const top = minToY(visualStart);
-    const h = Math.max(30, minToY(endMin) - top);
+    const h = Math.max(30, endMinToY(endMin, visualStart) - top);
 
     el.ghostPreview.style.top = `${top}px`;
     el.ghostPreview.style.height = `${h}px`;
@@ -1483,7 +1506,16 @@
         const minBound = getTimelineMinBound();
 
         if (mode === "move") {
-          previewStart = clamp(origStart + deltaMin, minBound, 1440 - origVisualDur);
+          const origD = toDisplayMin(origStart);
+          const nextD = clamp(origD + deltaMin, 0, 1440 - origVisualDur);
+          const rawStart = fromDisplayMin(nextD);
+          if (rawStart >= earlyEndMin && rawStart + origVisualDur > 1440) {
+            previewStart = 1440 - origVisualDur;
+          } else if (rawStart < earlyEndMin && rawStart + origVisualDur > earlyEndMin) {
+            previewStart = earlyEndMin - origVisualDur;
+          } else {
+            previewStart = rawStart;
+          }
           previewVisualEnd = previewStart + origVisualDur;
 
           const dockRect = el.stagingDock.getBoundingClientRect();
@@ -1495,11 +1527,13 @@
           el.stagingDock.classList.toggle("drop-active", droppingToDock);
         } else if (mode === "resize-bottom") {
           const baseEnd = origHasEnd ? ev.endMin : origStart + 15;
-          previewVisualEnd = clamp(baseEnd + deltaMin, origStart + (prefs.snapMin || 15), 1440);
+          const maxEnd = origStart < earlyEndMin ? earlyEndMin : 1440;
+          previewVisualEnd = clamp(baseEnd + deltaMin, origStart + (prefs.snapMin || 15), maxEnd);
           previewHasEnd = true;
         } else if (mode === "resize-top") {
           const ceiling = origHasEnd ? ev.endMin : origStart + 30;
-          previewStart = clamp(origStart + deltaMin, minBound, ceiling - (prefs.snapMin || 15));
+          const localMinBound = origStart >= earlyEndMin ? earlyEndMin : minBound;
+          previewStart = clamp(origStart + deltaMin, localMinBound, ceiling - (prefs.snapMin || 15));
           previewVisualEnd = ceiling;
         }
 
@@ -1508,7 +1542,7 @@
             ? earlyEndMin
             : previewStart;
         const top = minToY(visualStart);
-        const height = Math.max(26, minToY(previewVisualEnd) - top);
+        const height = Math.max(26, endMinToY(previewVisualEnd, visualStart) - top);
         block.style.top = `${top}px`;
         block.style.height = `${height - 2}px`;
         if (timeSpan) {
@@ -1618,10 +1652,13 @@
 
           const gridRect = el.timelineGrid.getBoundingClientRect();
           const y = tapStartY - gridRect.top;
-          const minBound = getTimelineMinBound();
+          const earlyEndMin = getEarlyEndMin();
           const defaultSpan = getDefaultDurationMin();
-          const anchorMin = clamp(snap(yToMin(y)), minBound, 1440 - Math.max(15, defaultSpan));
-          const endMin = Math.min(1440, anchorMin + defaultSpan);
+          const rawAnchor = snap(yToMin(y));
+          const zoneMin = rawAnchor < earlyEndMin ? 0 : earlyEndMin;
+          const zoneMax = rawAnchor < earlyEndMin ? earlyEndMin : 1440;
+          const anchorMin = clamp(rawAnchor, zoneMin, zoneMax - Math.max(15, defaultSpan));
+          const endMin = Math.min(zoneMax, anchorMin + defaultSpan);
           touchDraftSlot = { startMin: anchorMin, endMin };
           renderTouchDraftSlot();
         };
@@ -1636,15 +1673,19 @@
 
       const gridRect = el.timelineGrid.getBoundingClientRect();
       const startY = e.clientY - gridRect.top;
-      const anchorMin = snap(yToMin(startY));
+      const earlyEndMin = getEarlyEndMin();
+      const rawAnchor = snap(yToMin(startY));
+      const zoneMin = rawAnchor < earlyEndMin ? 0 : earlyEndMin;
+      const zoneMax = rawAnchor < earlyEndMin ? earlyEndMin : 1440;
+      const anchorMin = clamp(rawAnchor, zoneMin, Math.max(zoneMin, zoneMax - 15));
       const step = prefs.snapMin || 15;
-      let curEndMin = Math.min(1440, anchorMin + Math.max(30, step));
+      let curEndMin = Math.min(zoneMax, anchorMin + Math.max(30, step));
       let curStartMin = anchorMin;
       let dragged = false;
 
       const updateGhost = () => {
         const top = minToY(curStartMin);
-        const h = Math.max(22, minToY(curEndMin) - top);
+        const h = Math.max(22, endMinToY(curEndMin, curStartMin) - top);
         el.ghostPreview.classList.remove("is-touch-draft");
         el.ghostPreview.style.top = `${top}px`;
         el.ghostPreview.style.height = `${h}px`;
@@ -1663,9 +1704,9 @@
         if (Math.abs(mv.clientY - e.clientY) > 6) dragged = true;
         if (!dragged) return;
         const y = mv.clientY - el.timelineGrid.getBoundingClientRect().top;
-        const hoveredMin = snap(yToMin(y));
+        const hoveredMin = clamp(snap(yToMin(y)), zoneMin, zoneMax);
         curStartMin = Math.min(anchorMin, hoveredMin);
-        curEndMin = clamp(Math.max(anchorMin, hoveredMin) + step, curStartMin + step, 1440);
+        curEndMin = clamp(Math.max(anchorMin, hoveredMin) + step, curStartMin + step, zoneMax);
         updateGhost();
       };
 
@@ -1678,7 +1719,7 @@
 
         if (!dragged) {
           curStartMin = anchorMin;
-          curEndMin = Math.min(1440, anchorMin + getDefaultDurationMin());
+          curEndMin = Math.min(zoneMax, anchorMin + getDefaultDurationMin());
         }
         openNewEventModal(curStartMin, curEndMin);
       };
