@@ -783,16 +783,24 @@
     if (settings.mode === "supabase") {
       await requireSupabaseSession();
       const sb = await getSupabaseClient();
-      const { data, error } = await sb
-        .from("schedules")
-        .select(SCHEDULE_COLUMNS)
-        .gte("date", fromStr)
-        .lte("date", toStr)
-        .order("date", { ascending: true })
-        .order("start_at", { ascending: true, nullsFirst: false })
-        .order("created_at", { ascending: true });
-      if (error) throw new Error(error.message);
-      return sortSchedules((Array.isArray(data) ? data : []).map((r) => normalizeScheduleRecord(r, r.date)));
+      const rows = [];
+      const pageSize = 1000;
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await sb
+          .from("schedules")
+          .select(SCHEDULE_COLUMNS)
+          .gte("date", fromStr)
+          .lte("date", toStr)
+          .order("date", { ascending: true })
+          .order("start_at", { ascending: true, nullsFirst: false })
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (error) throw new Error(error.message);
+        rows.push(...(data || []));
+        if (!data || data.length < pageSize) break;
+      }
+      return sortSchedules(rows.map((r) => normalizeScheduleRecord(r, r.date)));
     }
     const items = [];
     let cursor = fromStr;

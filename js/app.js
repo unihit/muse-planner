@@ -17,7 +17,11 @@
     return Boolean(item && isItemCheckable(item) && item.done);
   }
 
-  let currentDate = PlannerAPI.todayKst();
+  const requestedDate = new URLSearchParams(window.location.search).get("date");
+  const validRequestedDate = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(requestedDate || "") &&
+    Number(requestedDate.slice(0, 4)) >= 1900 &&
+    new Date(`${requestedDate}T12:00:00Z`).toISOString().slice(0, 10) === requestedDate;
+  let currentDate = validRequestedDate ? requestedDate : PlannerAPI.todayKst();
   let prefs = PlannerAPI.getPrefs();
   let schedules = [];
   let backlogItems = [];
