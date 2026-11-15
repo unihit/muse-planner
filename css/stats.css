@@ -697,6 +697,13 @@ main {
   gap: 4px;
 }
 
+@media (min-width: 1081px) {
+  .detail {
+    /* 같은 행의 달력 카드 높이에 맞춰 목록이 남는 공간을 채우도록 한다 */
+    contain: size;
+  }
+}
+
 .detail h2 {
   font-size: 18px;
   font-weight: 740;
@@ -724,9 +731,9 @@ main {
 .item-list {
   flex: 1 1 auto;
   min-height: 0;
-  max-height: 340px;
   margin-top: 12px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .item-list li {
@@ -1056,6 +1063,14 @@ main {
   font-size: 12.5px;
   text-align: center;
   list-style: none;
+}
+
+#detailList .empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 0;
 }
 
 .sr-only {
