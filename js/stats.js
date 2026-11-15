@@ -82,7 +82,7 @@
       const stat = statistics(rows);
       const dow = (offset + day - 1) % 7;
       const button = document.createElement('button');
-      button.className = `${dow === 0 ? 'sun' : dow === 6 ? 'sat' : ''} ${date > today ? 'future' : ''} ${date === today ? 'today' : ''}`;
+      button.className = `${dow === 0 ? 'sun' : dow === 6 ? 'sat' : ''} ${date > today ? 'future' : ''} ${date === today ? 'today' : ''} ${rows.length ? 'has-items' : 'is-empty'}`;
       button.dataset.date = date;
       button.append(text('span', day, 'day-number'));
       const ratio = date > today ? rows.length ? `예정 ${rows.length}` : '—' : stat.total ? `${stat.done}/${stat.total}` : rows.length ? '대상 없음' : '—';
