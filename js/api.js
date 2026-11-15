@@ -52,6 +52,7 @@
     showBacklogList: true,
     backlogCollapsed: false,
     reminderCollapsed: false,
+    widgetOrder: ["summary", "pomodoro", "mit", "dday", "habits", "youtube", "memo"],
     widgets: {
       summary: true,
       pomodoro: true,
@@ -224,6 +225,10 @@
       showBacklogList: typeof parsed.showBacklogList === "boolean" ? parsed.showBacklogList : DEFAULT_PREFS.showBacklogList,
       backlogCollapsed: typeof parsed.backlogCollapsed === "boolean" ? parsed.backlogCollapsed : DEFAULT_PREFS.backlogCollapsed,
       reminderCollapsed: typeof parsed.reminderCollapsed === "boolean" ? parsed.reminderCollapsed : DEFAULT_PREFS.reminderCollapsed,
+      widgetOrder: [...new Set([
+        ...(Array.isArray(parsed.widgetOrder) ? parsed.widgetOrder.filter((key) => DEFAULT_PREFS.widgetOrder.includes(key)) : []),
+        ...DEFAULT_PREFS.widgetOrder
+      ])],
       widgets: { ...DEFAULT_PREFS.widgets, ...(parsed.widgets || {}) },
       ddays: Array.isArray(parsed.ddays)
         ? parsed.ddays

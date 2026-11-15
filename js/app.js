@@ -2101,6 +2101,144 @@
       const cb = el.settingsWidgetChecks?.querySelector(`input[data-widget="${key}"]`);
       if (cb) cb.checked = Boolean(visible);
     });
+    applyWidgetOrder();
+  }
+
+  // Keep DOM order and reading order aligned; hidden widgets retain their saved position.
+  function applyWidgetOrder() {
+    const container = document.querySelector(".right-widgets");
+    if (!container) return;
+    (prefs.widgetOrder || []).forEach((key) => {
+      const card = document.getElementById(`widget-${key}`);
+      if (card) container.appendChild(card);
+    });
+    const visible = [...container.querySelectorAll(".widget-card:not(.hidden)")];
+    visible.forEach((card, index) => {
+      const up = card.querySelector('[data-widget-move="-1"]');
+      const down = card.querySelector('[data-widget-move="1"]');
+      if (up) up.disabled = index === 0;
+      if (down) down.disabled = index === visible.length - 1;
+    });
+  }
+
+  function setupWidgetOrder() {
+    const container = document.querySelector(".right-widgets");
+    const edit = document.getElementById("widgetOrderEditBtn");
+    const tools = document.getElementById("widgetOrderTools");
+    const status = document.getElementById("widgetOrderStatus");
+    let editing = false;
+    let drag = null;
+    let frame = 0;
+    const keyOf = (card) => card.id.replace("widget-", "");
+    const save = (message) => {
+      PlannerAPI.savePrefs(prefs);
+      applyWidgetOrder();
+      status.textContent = message;
+    };
+    const clearMarker = () => container.querySelectorAll(".widget-drop-before, .widget-drop-after").forEach((card) => {
+      card.classList.remove("widget-drop-before", "widget-drop-after");
+    });
+    const finish = (commit) => {
+      if (!drag) return;
+      const { card, target, after, started } = drag;
+      cancelAnimationFrame(frame);
+      clearMarker();
+      card.classList.remove("widget-is-dragging");
+      container.classList.remove("widget-drag-active");
+      drag = null;
+      if (commit && started && target) {
+        const order = prefs.widgetOrder.filter((key) => key !== keyOf(card));
+        order.splice(order.indexOf(keyOf(target)) + (after ? 1 : 0), 0, keyOf(card));
+        prefs.widgetOrder = order;
+        save(`${card.querySelector("h3").textContent}의 순서를 저장했습니다.`);
+      }
+    };
+    const track = () => {
+      if (!drag) return;
+      if (!drag.started) {
+        if (Math.hypot(drag.x - drag.startX, drag.y - drag.startY) < 6) {
+          frame = requestAnimationFrame(track);
+          return;
+        }
+        drag.started = true;
+        drag.card.classList.add("widget-is-dragging");
+        container.classList.add("widget-drag-active");
+      }
+      const bounds = container.getBoundingClientRect();
+      if (drag.y < bounds.top + 45) container.scrollTop -= 9;
+      if (drag.y > bounds.bottom - 45) container.scrollTop += 9;
+      const cards = [...container.querySelectorAll(".widget-card:not(.hidden)")].filter((card) => card !== drag.card);
+      clearMarker();
+      const inside = drag.x >= bounds.left && drag.x <= bounds.right && drag.y >= bounds.top && drag.y <= bounds.bottom;
+      drag.target = inside ? cards.find((card) => {
+        const rect = card.getBoundingClientRect();
+        return drag.y < rect.top + rect.height / 2;
+      }) || cards[cards.length - 1] : null;
+      drag.after = inside && drag.target === cards[cards.length - 1] && drag.y >= drag.target.getBoundingClientRect().top + drag.target.offsetHeight / 2;
+      if (drag.target) drag.target.classList.add(drag.after ? "widget-drop-after" : "widget-drop-before");
+      frame = requestAnimationFrame(track);
+    };
+    container.querySelectorAll(".widget-card").forEach((card) => {
+      const title = card.querySelector("h3").textContent;
+      const controls = document.createElement("div");
+      controls.className = "widget-order-controls";
+      controls.innerHTML = '<button type="button" class="widget-order-handle" aria-label="순서 드래그">⠿</button><button type="button" data-widget-move="-1">↑</button><button type="button" data-widget-move="1">↓</button>';
+      controls.querySelectorAll("button").forEach((button) => {
+        const direction = Number(button.dataset.widgetMove);
+        button.setAttribute("aria-label", `${title} ${direction ? direction < 0 ? "위로 이동" : "아래로 이동" : "순서 드래그 (위·아래 방향키로도 이동)"}`);
+        const move = (step) => {
+          const visible = [...container.querySelectorAll(".widget-card:not(.hidden)")];
+          const neighbor = visible[visible.indexOf(card) + step];
+          if (!neighbor) return;
+          const a = prefs.widgetOrder.indexOf(keyOf(card));
+          const b = prefs.widgetOrder.indexOf(keyOf(neighbor));
+          [prefs.widgetOrder[a], prefs.widgetOrder[b]] = [prefs.widgetOrder[b], prefs.widgetOrder[a]];
+          save(`${title}의 순서를 저장했습니다.`);
+          button.focus();
+        };
+        if (direction) button.addEventListener("click", () => move(direction));
+        else {
+          button.addEventListener("keydown", (event) => {
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault();
+              move(event.key === "ArrowUp" ? -1 : 1);
+            }
+          });
+          button.addEventListener("pointerdown", (event) => {
+            if (!editing || event.button !== 0 || drag) return;
+            event.preventDefault();
+            drag = { card, id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, started: false, target: null };
+            button.setPointerCapture(event.pointerId);
+            track();
+          });
+          button.addEventListener("lostpointercapture", () => finish(false));
+        }
+      });
+      card.prepend(controls);
+    });
+    window.addEventListener("pointermove", (event) => {
+      if (drag && event.pointerId === drag.id) {
+        drag.x = event.clientX;
+        drag.y = event.clientY;
+      }
+    });
+    window.addEventListener("pointerup", (event) => { if (drag?.id === event.pointerId) finish(true); });
+    window.addEventListener("pointercancel", () => finish(false));
+    window.addEventListener("blur", () => finish(false));
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") finish(false); });
+    edit.addEventListener("click", () => {
+      finish(false);
+      editing = !editing;
+      container.classList.toggle("widget-order-editing", editing);
+      tools.classList.toggle("hidden", !editing);
+      edit.setAttribute("aria-pressed", String(editing));
+      edit.textContent = editing ? "편집 완료" : "순서 편집";
+    });
+    document.getElementById("widgetOrderResetBtn").addEventListener("click", () => {
+      prefs.widgetOrder = ["summary", "pomodoro", "mit", "dday", "habits", "youtube", "memo"];
+      save("기본 위젯 순서로 복원했습니다.");
+    });
+    applyWidgetOrder();
   }
 
   function updateApiBadge() {
@@ -5792,6 +5930,8 @@
       PlannerAPI.saveWidgetsState(currentDate, widgetsState);
       el.memoSavedHint.textContent = `로컬 저장 (${minToTimeStr(getNowKstMinutes())})`;
     });
+
+    setupWidgetOrder();
 
     el.widgetConfigBtn?.addEventListener("click", () => {
       openApiSettingsModal(el.settingsDisplaySection);

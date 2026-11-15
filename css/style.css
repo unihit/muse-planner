@@ -4869,3 +4869,18 @@ html[data-theme="light"] .modal-backdrop {
     font-size: 13px;
   }
 }
+
+/* Widget order editing: only the handle captures touch dragging. */
+.widget-order-tools { padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.widget-order-controls { display: none; align-items: center; gap: 6px; margin-bottom: 10px; }
+.widget-order-editing .widget-order-controls { display: flex; }
+.widget-order-controls button { min-width: 36px; min-height: 36px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; cursor: pointer; font-size: 18px; }
+.widget-order-controls button:disabled { opacity: .3; cursor: default; }
+.widget-order-controls .widget-order-handle { touch-action: none; cursor: grab; margin-right: auto; }
+.widget-order-handle:active { cursor: grabbing; }
+.widget-order-controls button:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+.widget-is-dragging { opacity: .45; }
+.widget-drag-active { user-select: none; }
+.widget-drop-before { box-shadow: 0 -4px 0 #60a5fa; }
+.widget-drop-after { box-shadow: 0 4px 0 #60a5fa; }
+.widget-order-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
