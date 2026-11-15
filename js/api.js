@@ -355,6 +355,19 @@
 
   /* -------------------- 스키마 정규화 (DB <-> 프론트 모델) -------------------- */
 
+  // 기존 서버와 호환되도록 메모 첫 줄에 사람이 읽을 수 있는 상태를 저장한다.
+  const SKIP_LINE = /^\[건너뜀\](?: [^\r\n]*)?(?:\r?\n|$)/;
+  function isScheduleSkipped(item) {
+    return !item.done && SKIP_LINE.test(String(item.memo || ""));
+  }
+  function clearSkipMemo(memo) {
+    return String(memo || "").replace(SKIP_LINE, "");
+  }
+  function skipMemo(memo, reason = "") {
+    const note = String(reason).replace(/[\r\n]+/g, " ").trim();
+    return `[건너뜀]${note ? ` ${note}` : ""}\n${clearSkipMemo(memo)}`;
+  }
+
   function normalizeScheduleRecord(raw, fallbackDate) {
     const isBacklog = raw?.date === null || (raw?.date === undefined && fallbackDate === null);
     const dateStr = isBacklog ? null : raw?.date || fallbackDate || todayKst();
@@ -1014,7 +1027,7 @@
       (targetItems || []).map((item) => `${item.type}:${String(item.title || "").trim()}`)
     );
     return prevItems.filter((item) => {
-      if (item.done || item.hasStartAt || item.template_id) return false;
+      if (item.done || isScheduleSkipped(item) || item.hasStartAt || item.template_id) return false;
       const key = `${item.type}:${String(item.title || "").trim()}`;
       return !existingKeys.has(key);
     });
@@ -1506,6 +1519,9 @@
     loadWidgetsState,
     saveWidgetsState,
     normalizeScheduleRecord,
+    isScheduleSkipped,
+    clearSkipMemo,
+    skipMemo,
     sortSchedules,
     getCachedSchedules,
     setCachedSchedules,

@@ -9,17 +9,56 @@
   let selected = month === today.slice(0, 7) ? today : `${month}-01`;
   let items = [];
   let requestId = 0;
+  let saving = false;
+  let editingItem = null;
+  let editingAction = null;
+  const skipped = api.isScheduleSkipped;
   const eligible = (item) => item.type === 'task' || (item.type === 'schedule' && prefs.trackScheduleDone !== false);
   const statistics = (rows) => {
-    const targets = rows.filter(eligible);
+    const skippedCount = rows.filter((item) => eligible(item) && skipped(item)).length;
+    const targets = rows.filter((item) => eligible(item) && !skipped(item));
     const done = targets.filter((item) => item.done);
     const duration = (item) => item.start_at && item.end_at ? Math.max(0, (Date.parse(item.end_at) - Date.parse(item.start_at)) / 60000) || 0 : 0;
-    return { total: targets.length, done: done.length, rate: targets.length ? Math.round(done.length / targets.length * 100) : null,
+    return { total: targets.length, done: done.length, skipped: skippedCount, rate: targets.length ? Math.round(done.length / targets.length * 100) : null,
       planned: rows.reduce((sum, item) => sum + duration(item), 0), completed: done.reduce((sum, item) => sum + duration(item), 0) };
   };
   const hours = (minutes) => `${(minutes / 60).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}시간`;
   const lastDay = (value) => `${value}-${new Date(Date.UTC(Number(value.slice(0, 4)), Number(value.slice(5)), 0)).getUTCDate()}`;
   const rowsOn = (date) => items.filter((item) => item.date === date);
+  const summary = (stats) => `${stats.done} / ${stats.total}개 완료 · 미완료 ${stats.total - stats.done}개 · 건너뜀 ${stats.skipped}개`;
+  function actionButton(label, handler) {
+    const button = text('button', label, 'report-action');
+    button.type = 'button';
+    button.disabled = saving;
+    button.addEventListener('click', handler);
+    return button;
+  }
+  function openAction(item, action) {
+    editingItem = item;editingAction = action;
+    $('actionTitle').textContent = `${item.title} · ${action === 'skip' ? '건너뛰기' : action === 'restore' ? '미완료로 되돌리기' : '다른 날로 미루기'}`;
+    $('moveFields').hidden = action !== 'move';
+    $('skipFields').hidden = action !== 'skip';
+    $('moveDate').value = today;$('moveDate').min = today;
+    $('skipReason').value = '';$('actionError').textContent = '';
+    $('reportActionDialog').showModal();
+  }
+  async function saveItem(item, patch) {
+    if (saving) return false;
+    saving = true;
+    $('saveAction').disabled = true;
+    $('cancelAction').disabled = true;
+    try {
+      await api.patchSchedule(item.id, patch, item.date);
+      return true;
+    } catch (error) {
+      $('actionError').textContent = `저장하지 못했습니다. ${error.message || '다시 시도해 주세요.'}`;
+      return false;
+    } finally {
+      saving = false;
+      $('saveAction').disabled = false;
+      $('cancelAction').disabled = false;
+    }
+  }
   function text(tag, value, className) {
     const node = document.createElement(tag);
     node.textContent = value;
@@ -35,16 +74,20 @@
     const rows = rowsOn(selected);
     const stats = statistics(rows);
     $('detailTitle').textContent = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${selected}T12:00:00+09:00`)) + (selected === today ? ' · 오늘' : '');
-    $('detailSummary').textContent = selected > today ? `예정된 항목 ${rows.length}개 · 완료율 집계 전` : stats.total ? `${stats.done} / ${stats.total}개 완료` : '완료율 집계 대상 없음';
+    $('detailSummary').textContent = selected > today ? `예정된 항목 ${rows.length}개 · 완료율 집계 전` : summary(stats);
     $('detailProgress').replaceChildren(progress(selected > today ? 0 : stats.rate));
     $('detailList').replaceChildren();
     rows.forEach((item) => {
       const li = document.createElement('li');
-      li.append(text('span', eligible(item) ? item.done ? '✓' : '○' : item.type === 'reminder' ? '♧' : '—', eligible(item) && item.done ? 'done-mark' : 'type-mark'));
+      li.append(text('span', skipped(item) ? '↷' : eligible(item) ? item.done ? '✓' : '○' : item.type === 'reminder' ? '♧' : '—', eligible(item) && item.done ? 'done-mark' : 'type-mark'));
       li.append(text('span', item.title, 'item-title'));
       const time = item.hasStartAt ? api.minutesToHhmm(item.startMin) + (item.hasEndAt ? `–${api.minutesToHhmm(item.endMin)}` : '') : '시간 미정';
       li.append(text('span', time, 'item-time'));
-      li.setAttribute('aria-label', `${item.title}, ${time}, ${eligible(item) ? item.done ? '완료' : '미완료' : '완료 추적 제외'}`);
+      li.setAttribute('aria-label', `${item.title}, ${time}, ${skipped(item) ? '건너뜀' : eligible(item) ? item.done ? '완료' : '미완료' : '완료 추적 제외'}`);
+      if (skipped(item)) {
+        const note = text('div', String(item.memo).split('\n')[0], 'skip-note');
+        li.append(note, actionButton('미완료로 되돌리기', () => openAction(item, 'restore')));
+      }
       $('detailList').append(li);
     });
     if (!rows.length) $('detailList').append(text('li', '이 날짜에 등록된 항목이 없습니다.', 'empty'));
@@ -74,7 +117,7 @@
       ? '미래 일정 미리보기 · 완료 집계 전'
       : `${month === currentMonth ? '오늘까지 배치된 일정·할 일' : '월 전체 일정·할 일'}${future ? ` · 미래 ${future}개 별도` : ''}`;
     $('completionRate').textContent = stats.rate === null ? '—' : `${stats.rate}%`;
-    $('completionNote').textContent = stats.total ? `${stats.done} / ${stats.total}개 완료` : month > currentMonth ? '아직 집계 전' : '집계할 항목 없음';
+    $('completionNote').textContent = month > currentMonth ? '아직 집계 전' : summary(stats);
     $('plannedTime').textContent = hours(stats.planned);
     $('completedTime').textContent = hours(stats.completed);
     $('calendar').replaceChildren();
@@ -90,6 +133,7 @@
       button.append(text('span', day, 'day-number'));
       const ratio = date > today ? rows.length ? `예정 ${rows.length}` : '—' : stat.total ? `${stat.done}/${stat.total}` : rows.length ? '대상 없음' : '—';
       button.append(text('span', ratio, 'day-ratio'));
+      if (stat.skipped) button.append(text('span', `건너뜀 ${stat.skipped}`, 'day-ratio'));
       if (date <= today && stat.total) {
         const bar = text('div', '', 'progress');
         const fill = progress(stat.rate);
@@ -116,7 +160,7 @@
     const max = Math.max(1, ...weeks.map((week) => week.stats.total));
     weeks.forEach((week, index) => {
       const col = text('div', '', 'week-column');
-      col.append(text('span', `${week.stats.total}개`));
+      col.append(text('span', `${week.stats.total}개${week.stats.skipped ? ` · 건너뜀 ${week.stats.skipped}` : ''}`));
       const stack = text('div', '', 'week-stack');
       const pending = text('div', week.stats.total - week.stats.done || '', 'week-pending');
       pending.style.height = `${(week.stats.total - week.stats.done) / max * 170}px`;
@@ -130,15 +174,18 @@
       col.setAttribute('aria-label', `${index + 1}주: 완료 ${week.stats.done}개, 미완료 ${week.stats.total - week.stats.done}개`);
       $('weeklyChart').append(col);
     });
-    if (!weeks.length || !stats.total) $('weeklyChart').replaceChildren(text('p', '집계할 완료 대상이 없습니다.', 'empty'));
-    const overdue = past.filter((item) => item.date < today && eligible(item) && !item.done).sort((a, b) => a.date.localeCompare(b.date));
-    $('overdueSummary').textContent = overdue.length ? `총 ${overdue.length}개 · 날짜를 눌러 플래너로 이동하세요.` : '지난 날짜에 남아 있는 완료 대상이 없습니다.';
+    if (!weeks.length || (!stats.total && !stats.skipped)) $('weeklyChart').replaceChildren(text('p', '집계할 완료 대상이 없습니다.', 'empty'));
+    const overdue = past.filter((item) => item.date < today && eligible(item) && !item.done && !skipped(item)).sort((a, b) => a.date.localeCompare(b.date));
+    $('overdueSummary').textContent = overdue.length ? `총 ${overdue.length}개 · 미루거나 건너뛰어 정리할 수 있습니다.` : '지난 날짜에 남아 있는 완료 대상이 없습니다.';
     $('overdueList').replaceChildren();
     overdue.forEach((item) => {
       const li = document.createElement('li');const link = document.createElement('a');
       link.href = `./index.html?date=${item.date}`;
       link.append(text('span', item.date.slice(5).replace('-', '.'), 'date-chip'), text('span', item.title, 'item-title'), text('span', '→', 'arrow'));
-      li.append(link);$('overdueList').append(li);
+      const actions = text('div', '', 'report-actions');
+      actions.append(actionButton('다른 날로 미루기', () => openAction(item, 'move')), actionButton('건너뛰기', () => openAction(item, 'skip')));
+      link.setAttribute('aria-label', `${item.date} ${item.title}, 플래너 열기`);
+      li.append(link, actions);$('overdueList').append(li);
     });
     $('reportStatus').textContent = `${month.replace('-', '년 ')}월 · ${month === today.slice(0, 7) ? `${Number(today.slice(-2))}일까지의 기록` : month > today.slice(0, 7) ? '미래 일정 미리보기' : '월 전체 기록'} · KST`;
   }
@@ -170,5 +217,22 @@
   $('nextMonth').addEventListener('click', () => change(api.shiftDateStr(`${month}-28`, 4).slice(0, 7)));
   $('thisMonth').addEventListener('click', () => change(today.slice(0, 7)));
   $('retry').addEventListener('click', () => void load());
+  $('cancelAction').addEventListener('click', () => $('reportActionDialog').close());
+  $('reportActionDialog').addEventListener('cancel', (event) => { if (saving) event.preventDefault(); });
+  $('reportActionForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (saving || !editingItem) return;
+    const item = editingItem;
+    let patch;
+    if (editingAction === 'move') {
+      const date = $('moveDate').value;
+      if (!date || date < today || date > '9999-12-31') { $('actionError').textContent = '오늘 이후의 날짜를 선택해 주세요.';return; }
+      patch = { date, start_at: item.hasStartAt ? api.kstMinutesToIso(date, item.startMin) : null,
+        end_at: item.hasEndAt ? api.kstMinutesToIso(date, item.endMin) : null };
+    } else {
+      patch = { memo: editingAction === 'restore' ? api.clearSkipMemo(item.memo) : api.skipMemo(item.memo, $('skipReason').value), done: false };
+    }
+    if (await saveItem(item, patch)) { $('reportActionDialog').close();await load(); }
+  });
   void load();
 })();

@@ -736,6 +736,19 @@ main {
   overflow-y: auto;
 }
 
+.report-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }
+.report-actions button, .report-action { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--text); cursor: pointer; }
+.report-actions button:disabled, .report-action:disabled { opacity: .5; cursor: wait; }
+.skip-note { flex-basis: 100%; color: var(--dim); overflow-wrap: anywhere; }
+.item-list li { flex-wrap: wrap; }
+#reportActionDialog { margin: auto; width: min(440px, calc(100% - 32px)); max-height: 90vh; overflow: auto; border: 1px solid var(--line); border-radius: 16px; padding: 24px; color: var(--text); background: var(--surface); }
+#reportActionDialog::backdrop { background: rgba(0, 0, 0, .55); }
+#reportActionDialog h2 { font-size: 18px; margin-bottom: 18px; overflow-wrap: anywhere; }
+#reportActionDialog label { display: block; margin-bottom: 8px; }
+#reportActionDialog input, #reportActionDialog textarea { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--surface-2); font: inherit; }
+#reportActionDialog p { margin: 12px 0; line-height: 1.6; }
+#actionError { color: var(--coral); }
+
 .item-list li {
   display: flex;
   align-items: center;

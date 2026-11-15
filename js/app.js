@@ -17,6 +17,7 @@
   };
 
   function isItemCheckable(itemOrType) {
+    if (typeof itemOrType === "object" && itemOrType && PlannerAPI.isScheduleSkipped(itemOrType)) return false;
     const type = typeof itemOrType === "string" ? itemOrType : itemOrType?.type;
     if (type === "reminder") return false;
     if (type === "schedule" && prefs.trackScheduleDone === false) return false;
@@ -2418,7 +2419,7 @@
           card.innerHTML = `
             <div class="dock-card-top">
               ${checkable ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
-              <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
+              <div class="dock-card-title" title="클릭하여 편집">${PlannerAPI.isScheduleSkipped(item) ? "↷ 건너뜀 · " : ""}${escapeHtml(item.title)}</div>
             </div>
             <div class="dock-card-meta">
               <span>${TYPE_META[item.type]?.label || "일정"}</span>
@@ -2532,7 +2533,7 @@
               card.innerHTML = `
                 <div class="dock-card-top">
                   ${checkable ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
-                  <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
+                  <div class="dock-card-title" title="클릭하여 편집">${PlannerAPI.isScheduleSkipped(item) ? "↷ 건너뜀 · " : ""}${escapeHtml(item.title)}</div>
                 </div>
                 <div class="dock-card-meta">
                   <span><span class="placed-time-badge">${escapeHtml(timeLabel)}</span> · ${TYPE_META[item.type]?.label || "일정"}</span>
@@ -2630,7 +2631,7 @@
               card.innerHTML = `
                 <div class="dock-card-top">
                   ${checkable ? `<input type="checkbox" class="event-check" ${item.done ? "checked" : ""} title="완료 체크" />` : ""}
-                  <div class="dock-card-title" title="클릭하여 편집">${escapeHtml(item.title)}</div>
+                  <div class="dock-card-title" title="클릭하여 편집">${PlannerAPI.isScheduleSkipped(item) ? "↷ 건너뜀 · " : ""}${escapeHtml(item.title)}</div>
                 </div>
                 <div class="dock-card-meta">
                   <span>${TYPE_META[item.type]?.label || "할 일"}</span>
@@ -2870,7 +2871,7 @@
         <div class="resize-handle top" title="위로 끌어 시작 시각 조절"></div>
         <div class="event-top-row">
           ${checkable ? `<input type="checkbox" class="event-check" ${ev.done ? "checked" : ""} title="완료 체크" />` : ""}
-          <span class="event-title">${escapeHtml(ev.title)}</span>
+          <span class="event-title">${PlannerAPI.isScheduleSkipped(ev) ? "↷ 건너뜀 · " : ""}${escapeHtml(ev.title)}</span>
           <div class="event-badges">
             ${isNow ? `<span class="badge-now">NOW</span>` : ""}
             ${routineBadge}
