@@ -67,11 +67,14 @@
     const days = Number(last.slice(-2));
     const past = items.filter((item) => item.date <= today && item.type !== 'reminder');
     const stats = statistics(past);
+    const currentMonth = today.slice(0, 7);
     $('itemCount').textContent = `${past.length}개`;
     const future = items.filter((item) => item.date > today && item.type !== 'reminder').length;
-    $('itemNote').textContent = `${month >= today.slice(0, 7) ? '오늘까지 배치된 일정·할 일' : '월 전체 일정·할 일'}${future ? ` · 미래 ${future}개 별도` : ''}`;
+    $('itemNote').textContent = month > currentMonth
+      ? '미래 일정 미리보기 · 완료 집계 전'
+      : `${month === currentMonth ? '오늘까지 배치된 일정·할 일' : '월 전체 일정·할 일'}${future ? ` · 미래 ${future}개 별도` : ''}`;
     $('completionRate').textContent = stats.rate === null ? '—' : `${stats.rate}%`;
-    $('completionNote').textContent = stats.total ? `${stats.done} / ${stats.total}개 완료` : '집계할 항목 없음';
+    $('completionNote').textContent = stats.total ? `${stats.done} / ${stats.total}개 완료` : month > currentMonth ? '아직 집계 전' : '집계할 항목 없음';
     $('plannedTime').textContent = hours(stats.planned);
     $('completedTime').textContent = hours(stats.completed);
     $('calendar').replaceChildren();
@@ -121,7 +124,9 @@
       done.style.height = `${week.stats.done / max * 170}px`;
       stack.append(pending, done);col.append(stack);
       const label = text('div', `${index + 1}주${week.from <= today && week.to >= today ? ' · 진행 중' : ''}`, 'week-label');
-      label.append(text('small', `${Number(week.from.slice(-2))}–${Number(week.to.slice(-2))}일`));col.append(label);
+      const startDay = Number(week.from.slice(-2));
+      const endDay = Number(week.to.slice(-2));
+      label.append(text('small', startDay === endDay ? `${startDay}일` : `${startDay}–${endDay}일`));col.append(label);
       col.setAttribute('aria-label', `${index + 1}주: 완료 ${week.stats.done}개, 미완료 ${week.stats.total - week.stats.done}개`);
       $('weeklyChart').append(col);
     });

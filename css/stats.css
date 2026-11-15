@@ -898,7 +898,8 @@ main {
   gap: 6px;
   max-height: 270px;
   margin-top: 14px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .overdue-list a {
@@ -917,7 +918,6 @@ main {
 .overdue-list a:hover {
   border-color: var(--line);
   background: var(--surface-3);
-  transform: translateX(2px);
 }
 
 .date-chip {
