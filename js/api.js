@@ -17,6 +17,8 @@
   const PREFS_KEY = "muse_planner_ui_prefs_v2";
   const ROUTINE_TEMPLATES_KEY = "muse_planner_routine_templates_v2";
   const ROUTINE_APPLIED_PREFIX = "muse_planner_routine_applied_v2_";
+  const DDAYS_STORAGE_KEY = "muse_planner_ddays_v1";
+  const DDAYS_CACHE_KEY = "muse_planner_cache_ddays_v1";
 
   const KST_TIMEZONE = "Asia/Seoul";
   const SUPABASE_DEFAULT_URL = "https://vetwwxmujaiwwwpjurpr.supabase.co";
@@ -24,6 +26,7 @@
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZldHd3eG11amFpd3d3cGp1cnByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMwOTQxNDEsImV4cCI6MjEwODY3MDE0MX0.XYxgyeN-vWZ5MDtJGG4hJaIdNH29L1eFQNnCivoXr6M";
   const SCHEDULE_COLUMNS =
     "id, date, start_at, end_at, title, type, done, done_at, source, memo, template_id, created_at, updated_at";
+  const DDAY_COLUMNS = "id, title, target_date, icon, memo, created_at, updated_at";
 
   const DEFAULT_SETTINGS = {
     mode: "supabase", // 'supabase' | 'local'
@@ -1277,6 +1280,195 @@
     return applyLocalRoutinesForDate(dateStr, options);
   }
 
+  /* -------------------- D-Day (planner_ddays + 로컬 폴백) -------------------- */
+
+  function normalizeDdayRecord(row) {
+    const targetDate = String(row?.target_date || row?.date || "").trim();
+    return {
+      id: String(row?.id || uid("dday")),
+      title: String(row?.title || "").trim(),
+      target_date: targetDate,
+      date: targetDate,
+      icon: String(row?.icon || "📌").trim().slice(0, 8) || "📌",
+      memo: row?.memo ? String(row.memo) : "",
+      created_at: row?.created_at || null,
+      updated_at: row?.updated_at || null
+    };
+  }
+
+  function loadLocalDdays() {
+    try {
+      const raw = localStorage.getItem(DDAYS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.map(normalizeDdayRecord).filter((d) => d.title && /^\d{4}-\d{2}-\d{2}$/.test(d.date));
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  }
+
+  function saveLocalDdays(list) {
+    localStorage.setItem(DDAYS_STORAGE_KEY, JSON.stringify((list || []).map(normalizeDdayRecord)));
+  }
+
+  function getCachedDdays() {
+    try {
+      const raw = localStorage.getItem(DDAYS_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(normalizeDdayRecord) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function setCachedDdays(list) {
+    try {
+      localStorage.setItem(DDAYS_CACHE_KEY, JSON.stringify((list || []).map(normalizeDdayRecord)));
+    } catch {
+      // ignore storage quota
+    }
+  }
+
+  async function fetchDdays() {
+    const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb
+        .from("planner_ddays")
+        .select(DDAY_COLUMNS)
+        .order("target_date", { ascending: true })
+        .order("created_at", { ascending: true });
+      if (error) throw new Error(error.message);
+      let list = (Array.isArray(data) ? data : []).map(normalizeDdayRecord);
+
+      // 기존 prefs.ddays에 남아 있던 항목이 있고 DB가 비어 있으면 1회 자동 이관
+      if (list.length === 0) {
+        const curPrefs = getPrefs();
+        if (Array.isArray(curPrefs.ddays) && curPrefs.ddays.length > 0) {
+          const rows = curPrefs.ddays
+            .filter((d) => d && d.title && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || "")))
+            .map((d) => ({
+              title: String(d.title).trim(),
+              target_date: String(d.date),
+              icon: String(d.icon || "📌").trim().slice(0, 8) || "📌"
+            }));
+          if (rows.length > 0) {
+            const { data: inserted } = await sb
+              .from("planner_ddays")
+              .insert(rows)
+              .select(DDAY_COLUMNS);
+            if (Array.isArray(inserted) && inserted.length > 0) {
+              list = inserted.map(normalizeDdayRecord);
+            }
+          }
+          curPrefs.ddays = [];
+          savePrefs(curPrefs);
+        }
+      }
+
+      setCachedDdays(list);
+      return list;
+    }
+    return loadLocalDdays();
+  }
+
+  async function createDday(payload) {
+    const clean = {
+      title: String(payload?.title || "").trim(),
+      target_date: String(payload?.target_date || payload?.date || "").trim(),
+      icon: String(payload?.icon || "📌").trim().slice(0, 8) || "📌",
+      memo: payload?.memo ? String(payload.memo).trim() : null
+    };
+    if (!clean.title) throw new Error("D-Day 제목을 입력해 주세요.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(clean.target_date)) throw new Error("유효한 날짜(YYYY-MM-DD)가 아닙니다.");
+
+    const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb
+        .from("planner_ddays")
+        .insert(clean)
+        .select(DDAY_COLUMNS)
+        .single();
+      if (error) throw new Error(error.message);
+      const created = normalizeDdayRecord(data);
+      const cached = getCachedDdays() || [];
+      setCachedDdays([...cached.filter((d) => d.id !== created.id), created]);
+      return created;
+    }
+
+    const list = loadLocalDdays();
+    const created = normalizeDdayRecord({
+      id: uid("dday"),
+      ...clean,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    });
+    list.push(created);
+    saveLocalDdays(list);
+    return created;
+  }
+
+  async function patchDday(id, patch) {
+    const updateBody = {};
+    if ("title" in (patch || {})) updateBody.title = String(patch.title || "").trim();
+    if ("target_date" in (patch || {}) || "date" in (patch || {})) {
+      updateBody.target_date = String(patch.target_date || patch.date || "").trim();
+    }
+    if ("icon" in (patch || {})) updateBody.icon = String(patch.icon || "📌").trim().slice(0, 8) || "📌";
+    if ("memo" in (patch || {})) updateBody.memo = patch.memo ? String(patch.memo).trim() : null;
+
+    const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { data, error } = await sb
+        .from("planner_ddays")
+        .update(updateBody)
+        .eq("id", id)
+        .select(DDAY_COLUMNS)
+        .single();
+      if (error) throw new Error(error.message);
+      const updated = normalizeDdayRecord(data);
+      const cached = getCachedDdays() || [];
+      setCachedDdays(cached.map((d) => (d.id === id ? updated : d)));
+      return updated;
+    }
+
+    const list = loadLocalDdays();
+    const idx = list.findIndex((d) => d.id === id);
+    if (idx === -1) throw new Error("D-Day를 찾을 수 없습니다.");
+    const updated = normalizeDdayRecord({
+      ...list[idx],
+      ...updateBody,
+      updated_at: new Date().toISOString()
+    });
+    list[idx] = updated;
+    saveLocalDdays(list);
+    return updated;
+  }
+
+  async function deleteDday(id) {
+    const settings = getSettings();
+    if (settings.mode === "supabase") {
+      await requireSupabaseSession();
+      const sb = await getSupabaseClient();
+      const { error } = await sb.from("planner_ddays").delete().eq("id", id);
+      if (error) throw new Error(error.message);
+      const cached = getCachedDdays();
+      if (cached) setCachedDdays(cached.filter((d) => d.id !== id));
+      return;
+    }
+    saveLocalDdays(loadLocalDdays().filter((d) => d.id !== id));
+  }
+
   global.PlannerAPI = {
     KST_TIMEZONE,
     SCHEDULE_COLUMNS,
@@ -1322,6 +1514,11 @@
     createRoutineTemplate,
     patchRoutineTemplate,
     deleteRoutineTemplate,
-    applyRoutinesForDate
+    applyRoutinesForDate,
+    getCachedDdays,
+    fetchDdays,
+    createDday,
+    patchDday,
+    deleteDday
   };
 })(typeof window !== "undefined" ? window : globalThis);

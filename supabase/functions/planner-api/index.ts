@@ -20,6 +20,8 @@ const SCHEDULE_SELECT =
   'id, date, start_at, end_at, title, type, done, done_at, source, memo, template_id, created_at, updated_at'
 const REALTIME_CHANNEL = 'muse-schedules'
 const REALTIME_EVENT = 'schedules_changed'
+const REALTIME_DDAY_EVENT = 'ddays_changed'
+const DDAY_SELECT = 'id, title, target_date, icon, memo, created_at, updated_at'
 
 const CORS_HEADERS: Record<string, string> = {
   'access-control-allow-origin': '*',
@@ -130,20 +132,15 @@ function db(): any {
   return client
 }
 
-async function broadcastScheduleChange(
-  action: 'create' | 'update' | 'delete',
-  details: {
-    id?: string | null
-    date?: string | null
-    prevDate?: string | null
-    source?: string | null
-  },
+async function broadcastRealtimeEvent(
+  eventName: string,
+  payload: Record<string, unknown>,
 ) {
   const url = (Deno.env.get('SUPABASE_URL') ?? '').replace(/\/+$/, '')
   const key = dbKey()
   if (!url || !key) return
 
-  const endpoint = `${url}/realtime/v1/api/broadcast/${REALTIME_CHANNEL}/events/${REALTIME_EVENT}`
+  const endpoint = `${url}/realtime/v1/api/broadcast/${REALTIME_CHANNEL}/events/${eventName}`
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     apikey: key,
@@ -157,18 +154,23 @@ async function broadcastScheduleChange(
       method: 'POST',
       headers,
       body: JSON.stringify({
-        action,
-        id: details.id ?? null,
-        date: details.date ?? null,
-        prevDate: details.prevDate ?? null,
-        source: details.source ?? null,
+        ...payload,
         at: new Date().toISOString(),
       }),
       signal: AbortSignal.timeout(1500),
     })
   } catch {
-    // Broadcast 실패가 일정 저장/수정 응답을 막지 않도록 무시
+    // Broadcast 실패가 저장/수정 응답을 막지 않도록 무시
   }
+}
+
+function scheduleWaitUntil(task: Promise<void>) {
+  const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+  if (runtime && typeof runtime.waitUntil === 'function') {
+    runtime.waitUntil(task)
+    return Promise.resolve()
+  }
+  return task
 }
 
 function notifyScheduleChange(
@@ -180,13 +182,27 @@ function notifyScheduleChange(
     source?: string | null
   },
 ) {
-  const task = broadcastScheduleChange(action, details)
-  const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
-  if (runtime && typeof runtime.waitUntil === 'function') {
-    runtime.waitUntil(task)
-    return Promise.resolve()
-  }
-  return task
+  return scheduleWaitUntil(
+    broadcastRealtimeEvent(REALTIME_EVENT, {
+      action,
+      id: details.id ?? null,
+      date: details.date ?? null,
+      prevDate: details.prevDate ?? null,
+      source: details.source ?? null,
+    }),
+  )
+}
+
+function notifyDdayChange(
+  action: 'create' | 'update' | 'delete',
+  id?: string | null,
+) {
+  return scheduleWaitUntil(
+    broadcastRealtimeEvent(REALTIME_DDAY_EVENT, {
+      action,
+      id: id ?? null,
+    }),
+  )
 }
 
 function jsonResponse(body: unknown, status = 200) {
@@ -840,6 +856,18 @@ async function handle(req: Request): Promise<Response> {
     if (method === 'DELETE') return deleteRoutine(id)
   }
 
+  if (path === '/v1/ddays') {
+    if (method === 'GET') return listDdays()
+    if (method === 'POST') return createDday(req)
+  }
+
+  const ddayMatch = path.match(/^\/v1\/ddays\/([^/]+)$/)
+  if (ddayMatch) {
+    const id = decodeURIComponent(ddayMatch[1])
+    if (method === 'PATCH') return updateDday(req, id)
+    if (method === 'DELETE') return deleteDday(id)
+  }
+
   throw new ApiError(404, 'NOT_FOUND', '엔드포인트를 찾을 수 없습니다.')
 }
 
@@ -1027,6 +1055,157 @@ async function deleteRoutine(id: string) {
 
   if (error) throw dbError(error)
   if (!data) throw new ApiError(404, 'NOT_FOUND', '루틴을 찾을 수 없습니다.')
+  return jsonResponse({ deleted: true, id }, 200)
+}
+
+function parseUtcDayMs(ymd: string): number {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return Date.UTC(y, (m || 1) - 1, d || 1)
+}
+
+function toApiDday(row: Record<string, unknown>) {
+  const targetDate = String(row.target_date || '')
+  const todayMs = parseUtcDayMs(todayKst())
+  const targetMs = isDateString(targetDate) ? parseUtcDayMs(targetDate) : todayMs
+  const daysLeft = Math.round((targetMs - todayMs) / 86400000)
+  const ddayLabel =
+    daysLeft === 0 ? 'D-Day' : daysLeft > 0 ? `D-${daysLeft}` : `D+${Math.abs(daysLeft)}`
+
+  return {
+    id: row.id,
+    title: row.title,
+    target_date: targetDate,
+    date: targetDate,
+    icon: row.icon || '📌',
+    memo: row.memo ?? null,
+    days_left: daysLeft,
+    dday_label: ddayLabel,
+    created_at: toKstIsoString(row.created_at),
+    updated_at: toKstIsoString(row.updated_at),
+  }
+}
+
+async function listDdays() {
+  const { data, error } = await db()
+    .from('planner_ddays')
+    .select(DDAY_SELECT)
+    .order('target_date', { ascending: true })
+    .order('created_at', { ascending: true })
+
+  if (error) throw dbError(error)
+  return jsonResponse((data ?? []).map(toApiDday), 200)
+}
+
+async function createDday(req: Request) {
+  const body = await readBody(req)
+  const fields: Record<string, string> = {}
+
+  const title = typeof body.title === 'string' ? body.title.trim() : ''
+  if (!title) fields.title = 'title은 비워둘 수 없습니다.'
+
+  const rawDate = body.target_date ?? body.date
+  const targetDate = typeof rawDate === 'string' ? rawDate.trim() : ''
+  if (!isDateString(targetDate)) {
+    fields.target_date = 'target_date(또는 date)는 YYYY-MM-DD 형식이어야 합니다.'
+  }
+
+  if (Object.keys(fields).length > 0) {
+    throw new ApiError(400, 'VALIDATION_ERROR', Object.values(fields)[0], fields)
+  }
+
+  const icon =
+    typeof body.icon === 'string' && body.icon.trim()
+      ? body.icon.trim().slice(0, 8)
+      : '📌'
+  const memo =
+    typeof body.memo === 'string' && body.memo.trim()
+      ? body.memo.trim()
+      : null
+
+  const { data, error } = await db()
+    .from('planner_ddays')
+    .insert({
+      title,
+      target_date: targetDate,
+      icon,
+      memo,
+    })
+    .select(DDAY_SELECT)
+    .single()
+
+  if (error) throw dbError(error)
+  await notifyDdayChange('create', data.id)
+  return jsonResponse(toApiDday(data), 201)
+}
+
+async function updateDday(req: Request, id: string) {
+  if (!UUID_RE.test(id)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', '유효하지 않은 D-Day ID입니다.')
+  }
+
+  const body = await readBody(req)
+  const fields: Record<string, string> = {}
+  const updateBody: Record<string, unknown> = {}
+
+  if ('title' in body) {
+    const title = typeof body.title === 'string' ? body.title.trim() : ''
+    if (!title) fields.title = 'title은 비워둘 수 없습니다.'
+    else updateBody.title = title
+  }
+  if ('target_date' in body || 'date' in body) {
+    const rawDate = 'target_date' in body ? body.target_date : body.date
+    const targetDate = typeof rawDate === 'string' ? rawDate.trim() : ''
+    if (!isDateString(targetDate)) {
+      fields.target_date = 'target_date(또는 date)는 YYYY-MM-DD 형식이어야 합니다.'
+    } else {
+      updateBody.target_date = targetDate
+    }
+  }
+  if ('icon' in body) {
+    updateBody.icon =
+      typeof body.icon === 'string' && body.icon.trim()
+        ? body.icon.trim().slice(0, 8)
+        : '📌'
+  }
+  if ('memo' in body) {
+    updateBody.memo =
+      typeof body.memo === 'string' && body.memo.trim() ? body.memo.trim() : null
+  }
+
+  if (Object.keys(fields).length > 0) {
+    throw new ApiError(400, 'VALIDATION_ERROR', Object.values(fields)[0], fields)
+  }
+  if (Object.keys(updateBody).length === 0) {
+    throw new ApiError(400, 'VALIDATION_ERROR', '수정할 필드가 없습니다.')
+  }
+
+  const { data, error } = await db()
+    .from('planner_ddays')
+    .update(updateBody)
+    .eq('id', id)
+    .select(DDAY_SELECT)
+    .maybeSingle()
+
+  if (error) throw dbError(error)
+  if (!data) throw new ApiError(404, 'NOT_FOUND', 'D-Day를 찾을 수 없습니다.')
+  await notifyDdayChange('update', data.id)
+  return jsonResponse(toApiDday(data), 200)
+}
+
+async function deleteDday(id: string) {
+  if (!UUID_RE.test(id)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', '유효하지 않은 D-Day ID입니다.')
+  }
+  const { data, error } = await db()
+    .from('planner_ddays')
+    .delete()
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+
+  if (error) throw dbError(error)
+  if (!data) throw new ApiError(404, 'NOT_FOUND', 'D-Day를 찾을 수 없습니다.')
+  await notifyDdayChange('delete', id)
   return jsonResponse({ deleted: true, id }, 200)
 }
 

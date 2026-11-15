@@ -21,6 +21,7 @@
   let prefs = PlannerAPI.getPrefs();
   let schedules = [];
   let backlogItems = [];
+  let ddays = [];
   let carryOverCount = 0;
   let carryOverCheckToken = 0;
   let widgetsState = {
@@ -1633,6 +1634,13 @@
             });
           }
         )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "planner_ddays" },
+          () => {
+            loadDdaysQuietly();
+          }
+        )
         .subscribe((status) => updateConnectionStatus("db", status));
 
       realtimeBroadcastChannel = sb
@@ -1666,6 +1674,9 @@
             prevDate: prevDate === undefined ? null : prevDate,
             receivedAt: Date.now()
           });
+        })
+        .on("broadcast", { event: "ddays_changed" }, () => {
+          loadDdaysQuietly();
         })
         .subscribe((status) => updateConnectionStatus("broadcast", status));
     } catch {
@@ -4326,9 +4337,26 @@
     return Date.UTC(y, (m || 1) - 1, d || 1);
   }
 
+  async function loadDdaysQuietly() {
+    const settings = PlannerAPI.getSettings();
+    if (ddays.length === 0 && settings.mode === "supabase") {
+      const cached = PlannerAPI.getCachedDdays?.();
+      if (cached && cached.length > 0) {
+        ddays = cached;
+        renderDdayWidget();
+      }
+    }
+    try {
+      ddays = await PlannerAPI.fetchDdays();
+      renderDdayWidget();
+    } catch {
+      // D-Day 조회 실패 시 기존 캐시 유지
+    }
+  }
+
   function renderDdayWidget() {
     if (!el.ddayList) return;
-    const list = Array.isArray(prefs.ddays) ? prefs.ddays : [];
+    const list = Array.isArray(ddays) ? ddays : [];
     if (el.ddayCountBadge) {
       el.ddayCountBadge.textContent = String(list.length);
     }
@@ -4389,11 +4417,18 @@
         showToast(`📅 ${item.date} (${item.title}) 일정으로 이동했습니다.`, item.icon || "⏳");
       });
 
-      card.querySelector(".del-dday-btn").addEventListener("click", (e) => {
+      card.querySelector(".del-dday-btn").addEventListener("click", async (e) => {
         e.stopPropagation();
-        prefs.ddays = (prefs.ddays || []).filter((d) => d.id !== item.id);
-        PlannerAPI.savePrefs(prefs);
+        const prev = [...ddays];
+        ddays = ddays.filter((d) => d.id !== item.id);
         renderDdayWidget();
+        try {
+          await PlannerAPI.deleteDday(item.id);
+        } catch (err) {
+          ddays = prev;
+          renderDdayWidget();
+          showToast(`D-Day 삭제 실패: ${err.message}`, "⚠️");
+        }
       });
 
       el.ddayList.appendChild(card);
@@ -5696,19 +5731,22 @@
         el.newDdayTitle?.focus();
       }
     });
-    el.addDdayForm?.addEventListener("submit", (e) => {
+    el.addDdayForm?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const title = el.newDdayTitle?.value.trim() || "";
       const date = el.newDdayDate?.value || "";
       if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
       const icon = el.newDdayIcon?.value.trim() || "📌";
-      if (!Array.isArray(prefs.ddays)) prefs.ddays = [];
-      prefs.ddays.push({ id: PlannerAPI.uid("dday"), icon, title, date });
-      PlannerAPI.savePrefs(prefs);
-      el.newDdayTitle.value = "";
-      el.addDdayForm.classList.add("hidden");
-      renderDdayWidget();
-      showToast(`⏳ '${title}' D-Day를 추가했습니다.`, icon);
+      try {
+        const created = await PlannerAPI.createDday({ title, date, icon });
+        ddays = [...ddays.filter((d) => d.id !== created.id), created];
+        el.newDdayTitle.value = "";
+        el.addDdayForm.classList.add("hidden");
+        renderDdayWidget();
+        showToast(`⏳ '${title}' D-Day를 추가했습니다.`, icon);
+      } catch (err) {
+        showToast(`D-Day 추가 실패: ${err.message}`, "⚠️");
+      }
     });
 
     el.habitToggleFormBtn?.addEventListener("click", () => {
@@ -6102,6 +6140,7 @@
               if (event === "SIGNED_IN" || event === "INITIAL_SESSION" || prevUserId !== nextUserId) {
                 setupRealtimeSync(prevUserId !== nextUserId);
                 syncCloudPrefs();
+                loadDdaysQuietly();
               }
             } else {
               disconnectRealtime();
@@ -6117,9 +6156,9 @@
 
     updateSupabaseAuthUi();
     if (settings.mode === "local") {
-      await loadDay(currentDate);
+      await Promise.all([loadDay(currentDate), loadDdaysQuietly()]);
     } else if (supabaseSession) {
-      await Promise.all([loadDay(currentDate), syncCloudPrefs()]);
+      await Promise.all([loadDay(currentDate), syncCloudPrefs(), loadDdaysQuietly()]);
     } else {
       updateApiBadge();
     }
@@ -6144,6 +6183,7 @@
       if (pomoState.isRunning) tickPomodoro();
       syncIfChanged(true, { force: true });
       syncCloudPrefs();
+      loadDdaysQuietly();
       setupRealtimeSync();
       checkBrowserNotifications();
     }
