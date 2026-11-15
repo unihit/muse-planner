@@ -1,4 +1,14 @@
 (function () {
+  // 앱에서 지정한 카드만 드래그하고 링크·이미지·선택한 글자의 기본 드래그는 막는다.
+  document.addEventListener("dragstart", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest('[draggable="true"]') ||
+        target.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, true);
+
   const COLLAPSED_EARLY_HEIGHT = 30;
   const TYPE_META = {
     schedule: { label: "일정", badge: "일정", icon: "📅", color: "#3b82f6" },

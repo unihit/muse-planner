@@ -57,6 +57,19 @@ html[data-theme="light"] {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 입력 중에는 커서 이동과 텍스트 선택을 허용한다. */
+input, textarea, [contenteditable]:not([contenteditable="false"]),
+[contenteditable]:not([contenteditable="false"]) * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+img, a {
+  -webkit-user-drag: none;
 }
 
 html, body {
