@@ -1,4 +1,4 @@
-const CACHE_NAME = "muse-planner-shell-v2";
+const CACHE_NAME = "muse-planner-shell-v3";
 
 self.addEventListener("install", () => {
   self.skipWaiting();

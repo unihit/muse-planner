@@ -304,7 +304,10 @@
     sbLoginPassword: document.getElementById("sbLoginPassword"),
     sbLoginBtn: document.getElementById("sbLoginBtn"),
 
-    toast: document.getElementById("toast")
+    toast: document.getElementById("toast"),
+    updateBanner: document.getElementById("updateBanner"),
+    updateBannerReloadBtn: document.getElementById("updateBannerReloadBtn"),
+    updateBannerDismissBtn: document.getElementById("updateBannerDismissBtn")
   };
 
   /* -------------------- 유틸 -------------------- */
@@ -6165,4 +6168,94 @@
       syncIfChanged(true);
     }
   }, 5000);
+
+  /* -------------------- 새 버전 업데이트 알림 배너 -------------------- */
+  (function initUpdateBanner() {
+    if (!el.updateBanner) return;
+
+    const UPDATE_CHECK_INTERVAL_MS = 60 * 1000;
+    let updateAvailable = false;
+    let updateDismissed = false;
+    let updateCheckInFlight = false;
+    let lastUpdateCheckAt = 0;
+
+    function readBundleSignature(doc) {
+      if (!doc) return "";
+      const cssHref =
+        doc.querySelector('link[rel="stylesheet"][href*="css/style.css"]')?.getAttribute("href") || "";
+      const apiSrc = doc.querySelector('script[src*="js/api.js"]')?.getAttribute("src") || "";
+      const appSrc = doc.querySelector('script[src*="js/app.js"]')?.getAttribute("src") || "";
+      if (!appSrc && !apiSrc && !cssHref) return "";
+      return `${cssHref}|${apiSrc}|${appSrc}`;
+    }
+
+    const loadedSignature = readBundleSignature(document);
+
+    function showUpdateBanner() {
+      updateAvailable = true;
+      if (!updateDismissed) {
+        el.updateBanner.classList.remove("hidden");
+      }
+    }
+
+    async function checkForAppUpdate() {
+      if (window.location.protocol === "file:") return;
+      if (updateAvailable || updateCheckInFlight) return;
+      if (!loadedSignature) return;
+      if (Date.now() - lastUpdateCheckAt < UPDATE_CHECK_INTERVAL_MS) return;
+
+      updateCheckInFlight = true;
+      lastUpdateCheckAt = Date.now();
+      try {
+        window.__museSwRegistration?.update?.().catch(() => {});
+        const checkUrl = new URL("./index.html", window.location.href);
+        checkUrl.searchParams.set("deploy-check", String(Date.now()));
+        const response = await fetch(checkUrl.toString(), { cache: "no-store" });
+        if (!response.ok) return;
+        const html = await response.text();
+        const parsed = new DOMParser().parseFromString(html, "text/html");
+        const deployedSignature = readBundleSignature(parsed);
+        if (deployedSignature && deployedSignature !== loadedSignature) {
+          showUpdateBanner();
+        }
+      } catch {
+        // 네트워크가 없으면 다음 확인 때 다시 시도한다.
+      } finally {
+        updateCheckInFlight = false;
+      }
+    }
+
+    el.updateBannerReloadBtn?.addEventListener("click", async () => {
+      try {
+        if ("caches" in window) {
+          const keys = await caches.keys();
+          await Promise.all(
+            keys.filter((k) => k.startsWith("muse-planner-")).map((k) => caches.delete(k))
+          );
+        }
+      } catch {
+        // ignore cache cleanup error
+      }
+      const nextUrl = new URL("./", window.location.href);
+      nextUrl.searchParams.set("v", String(Date.now()));
+      window.location.replace(nextUrl.toString());
+    });
+
+    el.updateBannerDismissBtn?.addEventListener("click", () => {
+      updateDismissed = true;
+      el.updateBanner.classList.add("hidden");
+    });
+
+    window.addEventListener("muse:app-update-available", showUpdateBanner);
+    window.addEventListener("focus", () => {
+      void checkForAppUpdate();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        void checkForAppUpdate();
+      }
+    });
+
+    void checkForAppUpdate();
+  })();
 })();
