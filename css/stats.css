@@ -421,7 +421,7 @@ main {
 }
 
 .gray-dot {
-  background: var(--track);
+  background: color-mix(in srgb, var(--muted) 34%, var(--surface));
 }
 
 .footnote {
@@ -864,8 +864,9 @@ main {
 }
 
 .week-pending {
-  background: color-mix(in srgb, var(--muted) 16%, transparent);
-  color: var(--muted);
+  background-color: color-mix(in srgb, var(--muted) 26%, var(--surface));
+  background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 22%, transparent) 0 2px, transparent 2px 8px);
+  color: color-mix(in srgb, var(--text) 62%, var(--muted));
 }
 
 .week-label {
