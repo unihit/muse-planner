@@ -13,7 +13,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-  <link rel="stylesheet" href="./css/style.css?v=20261114-61" />
+  <link rel="stylesheet" href="./css/style.css?v=20261114-62" />
 </head>
 <body>
   <!-- 로그인 화면 (가계부와 동일 Supabase Auth) -->
@@ -380,7 +380,90 @@
                 <strong id="statRemainingCount">0개</strong>
               </div>
             </div>
+            <div id="timeBudgetSummary" class="time-budget-bar" aria-label="오늘 시간 예산 요약"></div>
             <div id="typeBreakdownBars" class="category-bars"></div>
+          </section>
+
+          <section id="widget-pomodoro" class="widget-card">
+            <div class="widget-header">
+              <h3>🍅 집중 타이머</h3>
+              <span id="pomoSessionBadge" class="mini-count">0세션 · 0분</span>
+            </div>
+            <select id="pomoTargetSelect" class="pomo-target-select" aria-label="집중할 일정 선택">
+              <option value="">🎯 자유 집중 (일정 미지정)</option>
+            </select>
+            <div class="pomo-display-box" id="pomoDisplayBox">
+              <div class="pomo-display-top">
+                <span class="pomo-mode-pill" id="pomoModePill">FOCUS 25m</span>
+                <div class="pomo-time-readout" id="pomoTimeReadout">25:00</div>
+              </div>
+              <div class="pomo-progress-track">
+                <div id="pomoProgressFill" class="pomo-progress-fill" style="width: 0%"></div>
+              </div>
+            </div>
+            <div class="pomo-preset-row" id="pomoPresetRow">
+              <button type="button" class="pomo-preset-chip active" data-pomo-min="25" data-pomo-mode="focus">25분</button>
+              <button type="button" class="pomo-preset-chip" data-pomo-min="50" data-pomo-mode="focus">50분</button>
+              <button type="button" class="pomo-preset-chip" data-pomo-min="15" data-pomo-mode="focus">15분</button>
+              <button type="button" class="pomo-preset-chip" data-pomo-min="5" data-pomo-mode="break">☕ 5분 휴식</button>
+            </div>
+            <div class="pomo-controls-row">
+              <button id="pomoToggleBtn" type="button" class="btn-primary btn-xs pomo-main-btn">▶ 집중 시작</button>
+              <button id="pomoPlus5Btn" type="button" class="btn-secondary btn-xs" title="5분 연장">+5분</button>
+              <button id="pomoResetBtn" type="button" class="btn-secondary btn-xs" title="타이머 초기화">초기화</button>
+            </div>
+          </section>
+
+          <section id="widget-mit" class="widget-card">
+            <div class="widget-header">
+              <h3>🎯 오늘의 핵심 Top 3</h3>
+              <div class="widget-header-actions">
+                <button id="mitQuickPickToggleBtn" type="button" class="mini-btn" title="오늘 일정에서 가져오기">+ 일정 선택</button>
+                <span id="mitProgressBadge" class="mini-count">0/3</span>
+              </div>
+            </div>
+            <div id="mitQuickPickTray" class="mit-quick-tray hidden"></div>
+            <div id="mitSlotList" class="mit-slot-list"></div>
+          </section>
+
+          <section id="widget-dday" class="widget-card">
+            <div class="widget-header">
+              <h3>⏳ D-Day 카운트다운</h3>
+              <div class="widget-header-actions">
+                <button id="ddayToggleFormBtn" type="button" class="mini-btn">+ 추가</button>
+                <span id="ddayCountBadge" class="mini-count">0</span>
+              </div>
+            </div>
+            <form id="addDdayForm" class="dday-add-form hidden">
+              <div class="dday-form-row">
+                <input id="newDdayIcon" type="text" class="icon-input-sm" value="📌" maxlength="2" aria-label="아이콘" />
+                <input id="newDdayTitle" type="text" placeholder="목표/기념일 (예: 시험일)" required />
+              </div>
+              <div class="dday-form-row">
+                <input id="newDdayDate" type="date" required aria-label="목표 날짜" />
+                <button type="submit" class="btn-add-sm">추가</button>
+              </div>
+            </form>
+            <div id="ddayList" class="dday-list"></div>
+          </section>
+
+          <section id="widget-habits" class="widget-card">
+            <div class="widget-header">
+              <h3>💧 데일리 미니 습관</h3>
+              <div class="widget-header-actions">
+                <button id="habitToggleFormBtn" type="button" class="mini-btn">편집</button>
+                <span id="habitProgressBadge" class="mini-count">0/3</span>
+              </div>
+            </div>
+            <form id="addHabitForm" class="habit-add-form hidden">
+              <div class="habit-form-row">
+                <input id="newHabitIcon" type="text" class="icon-input-sm" value="💧" maxlength="2" aria-label="아이콘" />
+                <input id="newHabitTitle" type="text" placeholder="새 습관 이름..." required />
+                <input id="newHabitTarget" type="number" min="1" max="30" value="1" title="하루 목표 횟수" aria-label="하루 목표 횟수" />
+                <button type="submit" class="btn-add-sm">+</button>
+              </div>
+            </form>
+            <div id="habitList" class="habit-list"></div>
           </section>
 
           <section id="widget-youtube" class="widget-card">
@@ -698,7 +781,23 @@
             <div id="settingsWidgetChecks" class="settings-widget-grid">
               <label class="settings-widget-chip">
                 <input type="checkbox" data-widget="summary" checked />
-                <span>📊 오늘 완료율 &amp; 유형 배분</span>
+                <span>📊 오늘 완료율 &amp; 시간 예산</span>
+              </label>
+              <label class="settings-widget-chip">
+                <input type="checkbox" data-widget="pomodoro" checked />
+                <span>🍅 집중 타이머 (뽀모도로)</span>
+              </label>
+              <label class="settings-widget-chip">
+                <input type="checkbox" data-widget="mit" checked />
+                <span>🎯 오늘의 핵심 Top 3</span>
+              </label>
+              <label class="settings-widget-chip">
+                <input type="checkbox" data-widget="dday" checked />
+                <span>⏳ D-Day 카운트다운</span>
+              </label>
+              <label class="settings-widget-chip">
+                <input type="checkbox" data-widget="habits" checked />
+                <span>💧 데일리 미니 습관</span>
               </label>
               <label class="settings-widget-chip">
                 <input type="checkbox" data-widget="youtube" checked />
@@ -869,8 +968,8 @@
   <!-- 토스트 알림 -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./js/api.js?v=20261114-61"></script>
-  <script src="./js/app.js?v=20261114-61"></script>
+  <script src="./js/api.js?v=20261114-62"></script>
+  <script src="./js/app.js?v=20261114-62"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

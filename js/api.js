@@ -51,9 +51,19 @@
     reminderCollapsed: false,
     widgets: {
       summary: true,
+      pomodoro: true,
+      mit: true,
+      dday: true,
+      habits: true,
       youtube: true,
       memo: true
     },
+    ddays: [],
+    habits: [
+      { id: "hb-water", icon: "🥛", title: "물 마시기", target: 8 },
+      { id: "hb-vitamin", icon: "💊", title: "영양제 챙기기", target: 1 },
+      { id: "hb-stretch", icon: "🧘", title: "스트레칭", target: 1 }
+    ],
     presets: [
       { id: "pre_schedule", icon: "📅", title: "집중 일정", durationMin: 60, type: "schedule" },
       { id: "pre_task", icon: "✅", title: "할 일", durationMin: 30, type: "task" },
@@ -212,6 +222,26 @@
       backlogCollapsed: typeof parsed.backlogCollapsed === "boolean" ? parsed.backlogCollapsed : DEFAULT_PREFS.backlogCollapsed,
       reminderCollapsed: typeof parsed.reminderCollapsed === "boolean" ? parsed.reminderCollapsed : DEFAULT_PREFS.reminderCollapsed,
       widgets: { ...DEFAULT_PREFS.widgets, ...(parsed.widgets || {}) },
+      ddays: Array.isArray(parsed.ddays)
+        ? parsed.ddays
+            .filter((d) => d && d.title && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || "")))
+            .map((d) => ({
+              id: String(d.id || uid("dday")),
+              icon: String(d.icon || "📌").slice(0, 4),
+              title: String(d.title).trim(),
+              date: String(d.date)
+            }))
+        : [],
+      habits: Array.isArray(parsed.habits)
+        ? parsed.habits
+            .filter((h) => h && h.title)
+            .map((h) => ({
+              id: String(h.id || uid("hb")),
+              icon: String(h.icon || "💧").slice(0, 4),
+              title: String(h.title).trim(),
+              target: clampInt(h.target, 1, 99, 1)
+            }))
+        : structuredCloneSafe(DEFAULT_PREFS.habits),
       presets: Array.isArray(parsed.presets) && parsed.presets.length ? parsed.presets : structuredCloneSafe(DEFAULT_PREFS.presets),
       _updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : 0
     };
@@ -433,6 +463,40 @@
 
   /* -------------------- 우측 보조 위젯 (로컬 저장) -------------------- */
 
+  function normalizeMitList(rawList) {
+    const arr = Array.isArray(rawList) ? rawList : [];
+    return [0, 1, 2].map((idx) => {
+      const item = arr[idx];
+      return {
+        slot: idx + 1,
+        text: item && typeof item.text === "string" ? item.text : "",
+        done: Boolean(item && item.done),
+        scheduleId: item && item.scheduleId ? String(item.scheduleId) : null
+      };
+    });
+  }
+
+  function normalizeHabitCounts(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) {
+        out[String(k)] = Math.min(999, Math.round(n));
+      }
+    }
+    return out;
+  }
+
+  function normalizePomodoroStats(raw) {
+    const sessions = Number(raw?.sessions);
+    const totalMinutes = Number(raw?.totalMinutes);
+    return {
+      sessions: Number.isFinite(sessions) && sessions > 0 ? Math.round(sessions) : 0,
+      totalMinutes: Number.isFinite(totalMinutes) && totalMinutes > 0 ? Math.round(totalMinutes) : 0
+    };
+  }
+
   function loadWidgetsState(dateStr) {
     const key = WIDGETS_STORAGE_PREFIX + dateStr;
     try {
@@ -441,7 +505,10 @@
         const parsed = JSON.parse(raw);
         return {
           youtubeList: Array.isArray(parsed.youtubeList) ? parsed.youtubeList : [],
-          memo: typeof parsed.memo === "string" ? parsed.memo : ""
+          memo: typeof parsed.memo === "string" ? parsed.memo : "",
+          mitList: normalizeMitList(parsed.mitList),
+          habitCounts: normalizeHabitCounts(parsed.habitCounts),
+          pomodoroStats: normalizePomodoroStats(parsed.pomodoroStats)
         };
       }
     } catch {
@@ -461,7 +528,10 @@
               }
             ]
           : [],
-      memo: ""
+      memo: "",
+      mitList: normalizeMitList([]),
+      habitCounts: {},
+      pomodoroStats: { sessions: 0, totalMinutes: 0 }
     };
   }
 
@@ -469,8 +539,11 @@
     localStorage.setItem(
       WIDGETS_STORAGE_PREFIX + dateStr,
       JSON.stringify({
-        youtubeList: state.youtubeList || [],
-        memo: state.memo || ""
+        youtubeList: state?.youtubeList || [],
+        memo: state?.memo || "",
+        mitList: normalizeMitList(state?.mitList),
+        habitCounts: normalizeHabitCounts(state?.habitCounts),
+        pomodoroStats: normalizePomodoroStats(state?.pomodoroStats)
       })
     );
   }

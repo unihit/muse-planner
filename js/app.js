@@ -23,7 +23,29 @@
   let backlogItems = [];
   let carryOverCount = 0;
   let carryOverCheckToken = 0;
-  let widgetsState = { youtubeList: [], memo: "" };
+  let widgetsState = {
+    youtubeList: [],
+    memo: "",
+    mitList: [
+      { slot: 1, text: "", done: false, scheduleId: null },
+      { slot: 2, text: "", done: false, scheduleId: null },
+      { slot: 3, text: "", done: false, scheduleId: null }
+    ],
+    habitCounts: {},
+    pomodoroStats: { sessions: 0, totalMinutes: 0 }
+  };
+  const pomoState = {
+    mode: "focus",
+    durationSec: 25 * 60,
+    remainingSec: 25 * 60,
+    isRunning: false,
+    endAtMs: null,
+    timerId: null,
+    targetScheduleId: "",
+    targetManualEmpty: false
+  };
+  let mitQuickPickOpen = false;
+  let habitEditMode = false;
   let selectedEventId = null;
   let touchDraftSlot = null;
   let activeTypeFilter = "all";
@@ -158,7 +180,37 @@
     statTotalCount: document.getElementById("statTotalCount"),
     statDoneCount: document.getElementById("statDoneCount"),
     statRemainingCount: document.getElementById("statRemainingCount"),
+    timeBudgetSummary: document.getElementById("timeBudgetSummary"),
     typeBreakdownBars: document.getElementById("typeBreakdownBars"),
+    widgetPomodoro: document.getElementById("widget-pomodoro"),
+    pomoSessionBadge: document.getElementById("pomoSessionBadge"),
+    pomoTargetSelect: document.getElementById("pomoTargetSelect"),
+    pomoDisplayBox: document.getElementById("pomoDisplayBox"),
+    pomoModePill: document.getElementById("pomoModePill"),
+    pomoTimeReadout: document.getElementById("pomoTimeReadout"),
+    pomoProgressFill: document.getElementById("pomoProgressFill"),
+    pomoPresetRow: document.getElementById("pomoPresetRow"),
+    pomoToggleBtn: document.getElementById("pomoToggleBtn"),
+    pomoPlus5Btn: document.getElementById("pomoPlus5Btn"),
+    pomoResetBtn: document.getElementById("pomoResetBtn"),
+    mitQuickPickToggleBtn: document.getElementById("mitQuickPickToggleBtn"),
+    mitProgressBadge: document.getElementById("mitProgressBadge"),
+    mitQuickPickTray: document.getElementById("mitQuickPickTray"),
+    mitSlotList: document.getElementById("mitSlotList"),
+    ddayToggleFormBtn: document.getElementById("ddayToggleFormBtn"),
+    ddayCountBadge: document.getElementById("ddayCountBadge"),
+    addDdayForm: document.getElementById("addDdayForm"),
+    newDdayIcon: document.getElementById("newDdayIcon"),
+    newDdayTitle: document.getElementById("newDdayTitle"),
+    newDdayDate: document.getElementById("newDdayDate"),
+    ddayList: document.getElementById("ddayList"),
+    habitToggleFormBtn: document.getElementById("habitToggleFormBtn"),
+    habitProgressBadge: document.getElementById("habitProgressBadge"),
+    addHabitForm: document.getElementById("addHabitForm"),
+    newHabitIcon: document.getElementById("newHabitIcon"),
+    newHabitTitle: document.getElementById("newHabitTitle"),
+    newHabitTarget: document.getElementById("newHabitTarget"),
+    habitList: document.getElementById("habitList"),
     addYoutubeForm: document.getElementById("addYoutubeForm"),
     newYtTitle: document.getElementById("newYtTitle"),
     newYtUrl: document.getElementById("newYtUrl"),
@@ -1049,6 +1101,7 @@
     currentDate = dateStr;
     if (dateChanged) {
       pendingRealtimeEvents = [];
+      pomoState.targetManualEmpty = false;
     }
     carryOverCount = 0;
     updateCarryOverButtonUi();
@@ -2867,10 +2920,14 @@
   function selectEventBlock(eventId) {
     if (eventId) clearTouchDraftSlot();
     selectedEventId = eventId;
-    if (!el.eventsLayer) return;
-    el.eventsLayer.querySelectorAll(".event-block").forEach((node) => {
-      node.classList.toggle("is-selected", Boolean(eventId) && node.dataset.id === eventId);
-    });
+    if (el.eventsLayer) {
+      el.eventsLayer.querySelectorAll(".event-block").forEach((node) => {
+        node.classList.toggle("is-selected", Boolean(eventId) && node.dataset.id === eventId);
+      });
+    }
+    if (eventId && !pomoState.isRunning && !pomoState.targetScheduleId && !pomoState.targetManualEmpty) {
+      renderPomodoroWidget();
+    }
   }
 
   function renderTouchDraftSlot() {
@@ -3682,6 +3739,12 @@
       };
     }
 
+    el.nowBanner?.classList.toggle("is-pomo-running", pomoState.isRunning);
+    if (pomoState.isRunning && el.nowRemaining) {
+      const pomoEmoji = pomoState.mode === "break" ? "☕" : "🍅";
+      el.nowRemaining.textContent = `${pomoEmoji} ${formatPomoClock(pomoState.remainingSec)}`;
+    }
+
     const memoText = focusEv?.memo?.trim() || "";
     if (memoText) {
       el.islandMemoPreview.textContent = memoText;
@@ -3734,6 +3797,683 @@
 
   /* -------------------- 우측 요약 & 위젯 -------------------- */
 
+  function formatDurationCompact(totalMin) {
+    const mins = Math.max(0, Math.round(totalMin || 0));
+    if (mins === 0) return "0분";
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h === 0) return `${m}분`;
+    if (m === 0) return `${h}시간`;
+    return `${h}h ${m}m`;
+  }
+
+  function mergeIntervalsDuration(intervals) {
+    if (!intervals.length) return 0;
+    const sorted = [...intervals].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    let total = 0;
+    let [curStart, curEnd] = sorted[0];
+    for (let i = 1; i < sorted.length; i += 1) {
+      const [s, e] = sorted[i];
+      if (s <= curEnd) {
+        curEnd = Math.max(curEnd, e);
+      } else {
+        total += Math.max(0, curEnd - curStart);
+        curStart = s;
+        curEnd = e;
+      }
+    }
+    return total + Math.max(0, curEnd - curStart);
+  }
+
+  function formatPomoClock(sec) {
+    const safeSec = Math.max(0, Math.ceil(sec || 0));
+    const m = Math.floor(safeSec / 60);
+    const s = safeSec % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  function playPomodoroChime() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+      [660, 880].forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, now + idx * 0.14);
+        gain.gain.setValueAtTime(0.001, now + idx * 0.14);
+        gain.gain.exponentialRampToValueAtTime(0.14, now + idx * 0.14 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.14 + 0.28);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + idx * 0.14);
+        osc.stop(now + idx * 0.14 + 0.3);
+      });
+      setTimeout(() => ctx.close().catch(() => {}), 800);
+    } catch {
+      // ignore WebAudio restrictions
+    }
+  }
+
+  function renderTimeBudgetSummary(todayStr, nowMin) {
+    if (!el.timeBudgetSummary) return;
+    const isPastDay = currentDate < todayStr;
+    const isToday = currentDate === todayStr;
+
+    let plannedMin = 0;
+    let doneMin = 0;
+    const remainIntervals = [];
+    const windowStart = isToday ? nowMin : 0;
+
+    for (const s of schedules) {
+      if (!s.hasStartAt || s.type === "reminder") continue;
+      const start = s.startMin;
+      const end = s.hasEndAt && s.endMin !== null ? Math.max(start, s.endMin) : Math.min(1440, start + getDefaultDurationMin());
+      const dur = Math.max(0, end - start);
+      plannedMin += dur;
+
+      const countedDone = isItemCheckable(s)
+        ? isEffectiveDone(s)
+        : isPastDay || (isToday && end <= nowMin);
+
+      if (countedDone) {
+        doneMin += dur;
+      } else if (!isPastDay) {
+        const clampedStart = Math.max(windowStart, start);
+        const clampedEnd = Math.min(1440, end);
+        if (clampedEnd > clampedStart) {
+          remainIntervals.push([clampedStart, clampedEnd]);
+        }
+      }
+    }
+
+    let freeMin = 0;
+    if (!isPastDay) {
+      const busyRemain = mergeIntervalsDuration(remainIntervals);
+      if (isToday) {
+        freeMin = Math.max(0, 1440 - nowMin - busyRemain);
+      } else {
+        const earlyCollapsedSpan = prefs.earlyCollapsed ? Math.max(0, getEarlyEndMin() - getEarlyStartMin()) : 0;
+        const activeDayWindow = Math.max(60, 1440 - earlyCollapsedSpan);
+        freeMin = Math.max(0, activeDayWindow - busyRemain);
+      }
+    }
+
+    el.timeBudgetSummary.innerHTML = `
+      <div class="time-budget-chip">
+        <span class="time-budget-label">총 계획</span>
+        <span class="time-budget-val">${formatDurationCompact(plannedMin)}</span>
+      </div>
+      <div class="time-budget-chip is-done">
+        <span class="time-budget-label">완료 시간</span>
+        <span class="time-budget-val">${formatDurationCompact(doneMin)}</span>
+      </div>
+      <div class="time-budget-chip is-free">
+        <span class="time-budget-label">남은 여유</span>
+        <span class="time-budget-val">${formatDurationCompact(freeMin)}</span>
+      </div>
+    `;
+  }
+
+  function renderPomodoroWidget() {
+    if (!el.widgetPomodoro) return;
+
+    const stats = widgetsState.pomodoroStats || { sessions: 0, totalMinutes: 0 };
+    if (el.pomoSessionBadge) {
+      el.pomoSessionBadge.textContent = `${stats.sessions}세션 · ${stats.totalMinutes}분`;
+    }
+
+    if (el.pomoTargetSelect) {
+      const nowMin = getNowKstMinutes();
+      const isToday = isViewingToday();
+      const candidates = schedules.filter((s) => s.type !== "reminder" && !isEffectiveDone(s));
+      const activeNowEv = isToday
+        ? candidates.find((s) => {
+            if (!s.hasStartAt) return false;
+            const end = s.hasEndAt && s.endMin !== null ? s.endMin : s.startMin + 30;
+            return s.startMin <= nowMin && nowMin < end;
+          })
+        : null;
+
+      if (!pomoState.isRunning && !pomoState.targetScheduleId && !pomoState.targetManualEmpty) {
+        const selectedCandidate = selectedEventId ? candidates.find((s) => s.id === selectedEventId) : null;
+        if (selectedCandidate) {
+          pomoState.targetScheduleId = selectedCandidate.id;
+        } else if (activeNowEv) {
+          pomoState.targetScheduleId = activeNowEv.id;
+        }
+      }
+
+      if (pomoState.targetScheduleId && !findItemById(pomoState.targetScheduleId)) {
+        pomoState.targetScheduleId = "";
+      }
+
+      el.pomoTargetSelect.innerHTML = `<option value="">🎯 자유 집중 (일정 미지정)</option>`;
+      for (const item of candidates) {
+        const opt = document.createElement("option");
+        opt.value = item.id;
+        const prefix = activeNowEv?.id === item.id ? "▶ [진행 중] " : item.hasStartAt ? `${minToTimeStr(item.startMin)} ` : "";
+        opt.textContent = `${prefix}${item.title}`;
+        el.pomoTargetSelect.appendChild(opt);
+      }
+      if (pomoState.targetScheduleId) {
+        const alreadyIn = candidates.some((c) => c.id === pomoState.targetScheduleId);
+        if (!alreadyIn) {
+          const fallbackItem = findItemById(pomoState.targetScheduleId);
+          if (fallbackItem) {
+            const opt = document.createElement("option");
+            opt.value = fallbackItem.id;
+            opt.textContent = `${fallbackItem.done ? "✓ " : ""}${fallbackItem.title}`;
+            el.pomoTargetSelect.appendChild(opt);
+          }
+        }
+        el.pomoTargetSelect.value = pomoState.targetScheduleId;
+      } else {
+        el.pomoTargetSelect.value = "";
+      }
+    }
+
+    const totalSec = Math.max(1, pomoState.durationSec);
+    const doneRatio = clamp(Math.round(((totalSec - pomoState.remainingSec) / totalSec) * 100), 0, 100);
+    const presetMin = Math.round(pomoState.durationSec / 60);
+
+    if (el.pomoTimeReadout) {
+      el.pomoTimeReadout.textContent = formatPomoClock(pomoState.remainingSec);
+    }
+    if (el.pomoProgressFill) {
+      el.pomoProgressFill.style.width = `${doneRatio}%`;
+    }
+    if (el.pomoDisplayBox) {
+      el.pomoDisplayBox.classList.toggle("is-running", pomoState.isRunning);
+      el.pomoDisplayBox.classList.toggle("is-break", pomoState.mode === "break");
+    }
+    if (el.pomoModePill) {
+      if (!pomoState.isRunning && pomoState.remainingSec === 0) {
+        el.pomoModePill.textContent = "DONE! 🎉";
+      } else if (pomoState.mode === "break") {
+        el.pomoModePill.textContent = pomoState.isRunning ? "BREAK" : `BREAK ${presetMin}m`;
+      } else {
+        el.pomoModePill.textContent = pomoState.isRunning ? "FOCUSING" : `FOCUS ${presetMin}m`;
+      }
+    }
+    if (el.pomoToggleBtn) {
+      el.pomoToggleBtn.classList.toggle("is-running", pomoState.isRunning);
+      if (pomoState.isRunning) {
+        el.pomoToggleBtn.textContent = "⏸ 일시정지";
+      } else if (pomoState.remainingSec < pomoState.durationSec && pomoState.remainingSec > 0) {
+        el.pomoToggleBtn.textContent = "▶ 이어서 시작";
+      } else {
+        el.pomoToggleBtn.textContent = pomoState.mode === "break" ? "☕ 휴식 시작" : "▶ 집중 시작";
+      }
+    }
+    if (el.pomoPresetRow) {
+      el.pomoPresetRow.querySelectorAll(".pomo-preset-chip").forEach((btn) => {
+        const btnMin = Number(btn.dataset.pomoMin);
+        const btnMode = btn.dataset.pomoMode || "focus";
+        btn.classList.toggle("active", btnMin === presetMin && btnMode === pomoState.mode);
+      });
+    }
+  }
+
+  function handlePomodoroComplete() {
+    if (pomoState.timerId) {
+      clearInterval(pomoState.timerId);
+      pomoState.timerId = null;
+    }
+    pomoState.isRunning = false;
+    pomoState.endAtMs = null;
+    pomoState.remainingSec = 0;
+
+    const completedMin = Math.max(1, Math.round(pomoState.durationSec / 60));
+    const wasBreak = pomoState.mode === "break";
+    const targetEv = pomoState.targetScheduleId ? findItemById(pomoState.targetScheduleId) : null;
+
+    if (!wasBreak) {
+      const todayKey = PlannerAPI.todayKst();
+      if (todayKey === currentDate) {
+        if (!widgetsState.pomodoroStats) widgetsState.pomodoroStats = { sessions: 0, totalMinutes: 0 };
+        widgetsState.pomodoroStats.sessions += 1;
+        widgetsState.pomodoroStats.totalMinutes += completedMin;
+        PlannerAPI.saveWidgetsState(currentDate, widgetsState);
+      } else {
+        const todayWidgetState = PlannerAPI.loadWidgetsState(todayKey);
+        todayWidgetState.pomodoroStats.sessions += 1;
+        todayWidgetState.pomodoroStats.totalMinutes += completedMin;
+        PlannerAPI.saveWidgetsState(todayKey, todayWidgetState);
+      }
+    }
+
+    playPomodoroChime();
+
+    if (prefs.browserNotify && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      showSystemNotification(
+        wasBreak ? "☕ 휴식 타이머 종료" : `🍅 ${completedMin}분 집중 완료!`,
+        {
+          body: targetEv ? `집중 대상: ${targetEv.title}` : wasBreak ? "다시 집중을 시작할 준비가 되었습니다." : "잠시 휴식을 취하거나 완료를 체크하세요.",
+          tag: `pomo_${Date.now()}`
+        }
+      );
+    }
+
+    if (!wasBreak && targetEv && isItemCheckable(targetEv) && !targetEv.done) {
+      showToast(`🍅 '${targetEv.title}' ${completedMin}분 집중 완료!`, "🍅", {
+        durationMs: 8000,
+        action: {
+          label: "완료 체크",
+          onClick: async () => {
+            await toggleScheduleDone(targetEv.id, true);
+          }
+        }
+      });
+    } else if (!wasBreak) {
+      showToast(`🍅 ${completedMin}분 집중 완료! (${widgetsState.pomodoroStats.sessions}세션 누적)`, "🍅", {
+        durationMs: 6500,
+        action: {
+          label: "☕ 5분 휴식",
+          onClick: () => {
+            setPomodoroPreset(5, "break");
+            startPomodoro();
+          }
+        }
+      });
+    } else {
+      showToast("☕ 휴식 시간이 끝났습니다! 다음 집중을 시작해 보세요.", "☕", { durationMs: 5000 });
+    }
+
+    renderPomodoroWidget();
+    renderNowState();
+  }
+
+  function tickPomodoro() {
+    if (!pomoState.isRunning || !pomoState.endAtMs) return;
+    const remain = Math.max(0, Math.ceil((pomoState.endAtMs - Date.now()) / 1000));
+    if (remain <= 0) {
+      handlePomodoroComplete();
+      return;
+    }
+    if (remain !== pomoState.remainingSec) {
+      pomoState.remainingSec = remain;
+      renderPomodoroWidget();
+      renderNowState();
+    }
+  }
+
+  function startPomodoro() {
+    if (pomoState.isRunning) return;
+    if (pomoState.remainingSec <= 0) {
+      pomoState.remainingSec = pomoState.durationSec;
+    }
+    pomoState.isRunning = true;
+    pomoState.endAtMs = Date.now() + pomoState.remainingSec * 1000;
+    if (pomoState.timerId) clearInterval(pomoState.timerId);
+    pomoState.timerId = setInterval(tickPomodoro, 500);
+    renderPomodoroWidget();
+    renderNowState();
+  }
+
+  function pausePomodoro() {
+    if (!pomoState.isRunning) return;
+    if (pomoState.endAtMs) {
+      pomoState.remainingSec = Math.max(0, Math.ceil((pomoState.endAtMs - Date.now()) / 1000));
+    }
+    pomoState.isRunning = false;
+    pomoState.endAtMs = null;
+    if (pomoState.timerId) {
+      clearInterval(pomoState.timerId);
+      pomoState.timerId = null;
+    }
+    renderPomodoroWidget();
+    renderNowState();
+  }
+
+  function setPomodoroPreset(minutes, mode = "focus") {
+    if (pomoState.timerId) {
+      clearInterval(pomoState.timerId);
+      pomoState.timerId = null;
+    }
+    pomoState.isRunning = false;
+    pomoState.endAtMs = null;
+    pomoState.mode = mode === "break" ? "break" : "focus";
+    const sec = clamp(Number(minutes) || 25, 1, 120) * 60;
+    pomoState.durationSec = sec;
+    pomoState.remainingSec = sec;
+    renderPomodoroWidget();
+    renderNowState();
+  }
+
+  function extendPomodoroMinutes(extraMin = 5) {
+    const maxSec = 120 * 60;
+    const addSec = extraMin * 60;
+    pomoState.durationSec = Math.min(maxSec, pomoState.durationSec + addSec);
+    pomoState.remainingSec = Math.min(maxSec, pomoState.remainingSec + addSec);
+    if (pomoState.isRunning && pomoState.endAtMs) {
+      pomoState.endAtMs = Math.min(Date.now() + maxSec * 1000, pomoState.endAtMs + addSec * 1000);
+    }
+    renderPomodoroWidget();
+    renderNowState();
+  }
+
+  function resetPomodoro() {
+    if (pomoState.timerId) {
+      clearInterval(pomoState.timerId);
+      pomoState.timerId = null;
+    }
+    pomoState.isRunning = false;
+    pomoState.endAtMs = null;
+    pomoState.remainingSec = pomoState.durationSec;
+    renderPomodoroWidget();
+    renderNowState();
+  }
+
+  function renderMitQuickPickTray() {
+    if (!el.mitQuickPickTray) return;
+    el.mitQuickPickTray.classList.toggle("hidden", !mitQuickPickOpen);
+    if (!mitQuickPickOpen) return;
+
+    const list = widgetsState.mitList || [];
+    const linkedIds = new Set(list.map((m) => m.scheduleId).filter(Boolean));
+    const candidates = schedules.filter((s) => s.type !== "reminder" && !isEffectiveDone(s) && !linkedIds.has(s.id));
+
+    el.mitQuickPickTray.innerHTML = "";
+    if (!candidates.length) {
+      el.mitQuickPickTray.innerHTML = `<span class="widget-hint" style="margin:0">가져올 수 있는 오늘 미완료 일정이 없습니다</span>`;
+      return;
+    }
+
+    for (const item of candidates.slice(0, 8)) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "mit-quick-chip";
+      chip.textContent = `+ ${item.title}`;
+      chip.title = item.title;
+      chip.addEventListener("click", () => {
+        const emptySlot = list.find((s) => !s.text.trim());
+        if (!emptySlot) {
+          showToast("핵심 목표 3칸이 모두 찼습니다. 슬롯을 비운 뒤 선택해 주세요.", "🎯");
+          return;
+        }
+        emptySlot.text = item.title;
+        emptySlot.done = false;
+        emptySlot.scheduleId = item.id;
+        PlannerAPI.saveWidgetsState(currentDate, widgetsState);
+        if (!list.some((s) => !s.text.trim())) {
+          mitQuickPickOpen = false;
+        }
+        renderMitWidget(true);
+      });
+      el.mitQuickPickTray.appendChild(chip);
+    }
+  }
+
+  function renderMitWidget(forceRebuild = false) {
+    if (!el.mitSlotList) return;
+    if (!Array.isArray(widgetsState.mitList) || widgetsState.mitList.length !== 3) {
+      widgetsState.mitList = [
+        { slot: 1, text: "", done: false, scheduleId: null },
+        { slot: 2, text: "", done: false, scheduleId: null },
+        { slot: 3, text: "", done: false, scheduleId: null }
+      ];
+    }
+
+    const list = widgetsState.mitList;
+    let doneCount = 0;
+    let syncedDirty = false;
+
+    const resolvedSlots = list.map((slot) => {
+      const linked = slot.scheduleId ? findItemById(slot.scheduleId) : null;
+      let effectiveDone = Boolean(slot.done);
+      if (linked && isItemCheckable(linked)) {
+        effectiveDone = Boolean(linked.done);
+        if (slot.done !== effectiveDone) {
+          slot.done = effectiveDone;
+          syncedDirty = true;
+        }
+      }
+      if (slot.text.trim() && effectiveDone) doneCount += 1;
+      return { slot, linked, effectiveDone };
+    });
+
+    if (syncedDirty) {
+      PlannerAPI.saveWidgetsState(currentDate, widgetsState);
+    }
+
+    if (el.mitProgressBadge) {
+      el.mitProgressBadge.textContent = `${doneCount}/3`;
+    }
+
+    renderMitQuickPickTray();
+
+    const activeEl = document.activeElement;
+    if (!forceRebuild && activeEl && el.mitSlotList.contains(activeEl) && activeEl.classList?.contains("mit-input")) {
+      return;
+    }
+
+    el.mitSlotList.innerHTML = "";
+    resolvedSlots.forEach(({ slot, linked, effectiveDone }, idx) => {
+      const row = document.createElement("div");
+      row.className = `mit-slot-row ${effectiveDone && slot.text.trim() ? "is-done" : ""}`;
+      row.innerHTML = `
+        <span class="mit-rank-badge">${idx + 1}</span>
+        <input type="checkbox" class="event-check mit-check" ${effectiveDone ? "checked" : ""} ${slot.text.trim() ? "" : "disabled"} />
+        <input type="text" class="mit-input" value="${escapeAttr(slot.text)}" placeholder="오늘의 핵심 목표 ${idx + 1}..." />
+        ${linked ? `<button type="button" class="mit-linked-dot" title="연결된 일정 위치로 이동">🔗</button>` : ""}
+        ${slot.text.trim() ? `<button type="button" class="mit-clear-btn" title="비우기">✕</button>` : ""}
+      `;
+
+      const checkEl = row.querySelector(".mit-check");
+      const inputEl = row.querySelector(".mit-input");
+      const linkedBtn = row.querySelector(".mit-linked-dot");
+      const clearBtn = row.querySelector(".mit-clear-btn");
+
+      checkEl.addEventListener("change", async (e) => {
+        const nextDone = e.target.checked;
+        slot.done = nextDone;
+        PlannerAPI.saveWidgetsState(currentDate, widgetsState);
+        if (linked && isItemCheckable(linked)) {
+          await toggleScheduleDone(linked.id, nextDone);
+        } else {
+          renderMitWidget(true);
+        }
+      });
+
+      inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          inputEl.blur();
+        }
+      });
+
+      inputEl.addEventListener("change", () => {
+        const nextVal = inputEl.value.trim();
+        slot.text = nextVal;
+        if (!nextVal) {
+          slot.done = false;
+          slot.scheduleId = null;
+        } else if (linked && linked.title !== nextVal) {
+          slot.scheduleId = null;
+        }
+        PlannerAPI.saveWidgetsState(currentDate, widgetsState);
+        renderMitWidget(true);
+      });
+
+      if (linkedBtn && linked) {
+        linkedBtn.addEventListener("click", () => {
+          jumpToSchedule(linked);
+        });
+      }
+
+      if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+          slot.text = "";
+          slot.done = false;
+          slot.scheduleId = null;
+          PlannerAPI.saveWidgetsState(currentDate, widgetsState);
+          renderMitWidget(true);
+        });
+      }
+
+      el.mitSlotList.appendChild(row);
+    });
+  }
+
+  function parseUtcMidnight(ymd) {
+    const [y, m, d] = String(ymd || "").split("-").map(Number);
+    return Date.UTC(y, (m || 1) - 1, d || 1);
+  }
+
+  function renderDdayWidget() {
+    if (!el.ddayList) return;
+    const list = Array.isArray(prefs.ddays) ? prefs.ddays : [];
+    if (el.ddayCountBadge) {
+      el.ddayCountBadge.textContent = String(list.length);
+    }
+
+    el.ddayList.innerHTML = "";
+    if (!list.length) {
+      el.ddayList.innerHTML = `<div class="empty-hint">시험, 마감일 등 D-Day를 추가해 보세요</div>`;
+      return;
+    }
+
+    const todayUtc = parseUtcMidnight(PlannerAPI.todayKst());
+    const enriched = list
+      .map((item) => {
+        const diffDays = Math.round((parseUtcMidnight(item.date) - todayUtc) / 86400000);
+        return { ...item, diffDays };
+      })
+      .sort((a, b) => {
+        const aPast = a.diffDays < 0 ? 1 : 0;
+        const bPast = b.diffDays < 0 ? 1 : 0;
+        if (aPast !== bPast) return aPast - bPast;
+        return aPast ? b.diffDays - a.diffDays : a.diffDays - b.diffDays;
+      });
+
+    for (const item of enriched) {
+      const card = document.createElement("div");
+      card.className = "dday-card";
+      card.title = `${item.date} 일정 보기`;
+
+      let badgeLabel = `D-${item.diffDays}`;
+      let badgeCls = "";
+      if (item.diffDays === 0) {
+        badgeLabel = "D-Day";
+        badgeCls = "is-dday";
+      } else if (item.diffDays < 0) {
+        badgeLabel = `D+${Math.abs(item.diffDays)}`;
+        badgeCls = "is-past";
+      } else if (item.diffDays <= 3) {
+        badgeCls = "is-urgent";
+      }
+
+      card.innerHTML = `
+        <div class="dday-card-main">
+          <span class="dday-icon">${escapeHtml(item.icon || "📌")}</span>
+          <div class="dday-text-col">
+            <span class="dday-card-title">${escapeHtml(item.title)}</span>
+            <span class="dday-card-date">${escapeHtml(item.date)}</span>
+          </div>
+        </div>
+        <div class="dday-card-right">
+          <span class="dday-badge ${badgeCls}">${badgeLabel}</span>
+          <button type="button" class="mini-btn del del-dday-btn" title="삭제">✕</button>
+        </div>
+      `;
+
+      card.addEventListener("click", (e) => {
+        if (e.target.closest(".del-dday-btn")) return;
+        loadDay(item.date);
+        showToast(`📅 ${item.date} (${item.title}) 일정으로 이동했습니다.`, item.icon || "⏳");
+      });
+
+      card.querySelector(".del-dday-btn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        prefs.ddays = (prefs.ddays || []).filter((d) => d.id !== item.id);
+        PlannerAPI.savePrefs(prefs);
+        renderDdayWidget();
+      });
+
+      el.ddayList.appendChild(card);
+    }
+  }
+
+  function updateHabitCount(habitId, delta) {
+    if (!widgetsState.habitCounts) widgetsState.habitCounts = {};
+    const cur = Math.max(0, Number(widgetsState.habitCounts[habitId]) || 0);
+    const next = clamp(cur + delta, 0, 999);
+    widgetsState.habitCounts[habitId] = next;
+    PlannerAPI.saveWidgetsState(currentDate, widgetsState);
+    renderHabitsWidget();
+  }
+
+  function renderHabitsWidget() {
+    if (!el.habitList) return;
+    const habits = Array.isArray(prefs.habits) ? prefs.habits : [];
+    const counts = widgetsState.habitCounts || {};
+    let completedCount = 0;
+
+    el.habitList.classList.toggle("is-editing", habitEditMode);
+    if (el.habitToggleFormBtn) {
+      el.habitToggleFormBtn.textContent = habitEditMode ? "완료" : "편집";
+    }
+    if (el.addHabitForm) {
+      el.addHabitForm.classList.toggle("hidden", !habitEditMode);
+    }
+
+    el.habitList.innerHTML = "";
+    if (!habits.length) {
+      if (el.habitProgressBadge) el.habitProgressBadge.textContent = "0/0";
+      el.habitList.innerHTML = `<div class="empty-hint">상단 '편집'을 눌러 데일리 습관을 추가해 보세요</div>`;
+      return;
+    }
+
+    for (const h of habits) {
+      const target = Math.max(1, Number(h.target) || 1);
+      const count = Math.max(0, Number(counts[h.id]) || 0);
+      const completed = count >= target;
+      if (completed) completedCount += 1;
+      const pct = Math.min(100, Math.round((count / target) * 100));
+
+      const card = document.createElement("div");
+      card.className = `habit-card ${completed ? "is-completed" : ""}`;
+      card.innerHTML = `
+        <div class="habit-card-top">
+          <div class="habit-card-name">
+            <span>${escapeHtml(h.icon || "💧")}</span>
+            <span>${escapeHtml(h.title)}${completed ? " ✓" : ""}</span>
+          </div>
+          <div class="habit-controls">
+            <button type="button" class="habit-step-btn habit-minus-btn" aria-label="횟수 감소">-</button>
+            <span class="habit-count-pill">${count}/${target}</span>
+            <button type="button" class="habit-step-btn habit-plus-btn" aria-label="횟수 증가">+</button>
+            <button type="button" class="mini-btn del del-habit-btn" title="습관 삭제">✕</button>
+          </div>
+        </div>
+        <div class="habit-progress-mini">
+          <div class="habit-progress-fill" style="width:${pct}%"></div>
+        </div>
+      `;
+
+      card.addEventListener("click", (e) => {
+        if (e.target.closest("button")) return;
+        updateHabitCount(h.id, 1);
+      });
+      card.querySelector(".habit-minus-btn").addEventListener("click", () => updateHabitCount(h.id, -1));
+      card.querySelector(".habit-plus-btn").addEventListener("click", () => updateHabitCount(h.id, 1));
+      card.querySelector(".del-habit-btn").addEventListener("click", () => {
+        prefs.habits = (prefs.habits || []).filter((item) => item.id !== h.id);
+        PlannerAPI.savePrefs(prefs);
+        renderHabitsWidget();
+      });
+
+      el.habitList.appendChild(card);
+    }
+
+    if (el.habitProgressBadge) {
+      el.habitProgressBadge.textContent = `${completedCount}/${habits.length}`;
+    }
+  }
+
   function renderRightWidgets() {
     const completable = schedules.filter((e) => e.type === "task");
     const doneCount = completable.filter((e) => e.done).length;
@@ -3747,6 +4487,8 @@
 
     const todayStr = PlannerAPI.todayKst();
     const nowMin = getNowKstMinutes();
+    renderTimeBudgetSummary(todayStr, nowMin);
+
     const statsByType = {
       task: { total: 0, done: 0 },
       reminder: { total: 0, done: 0 }
@@ -3784,6 +4526,10 @@
     }
     el.typeBreakdownBars.appendChild(breakdownFrag);
 
+    renderPomodoroWidget();
+    renderMitWidget();
+    renderDdayWidget();
+    renderHabitsWidget();
     renderYoutubeList();
 
     if (document.activeElement !== el.dailyMemo) {
@@ -4910,6 +5656,78 @@
       }
     });
 
+    // 우측 위젯 이벤트 바인딩 (뽀모도로 / 핵심 Top 3 / D-Day / 습관 / 유튜브 / 메모)
+    el.pomoTargetSelect?.addEventListener("change", (e) => {
+      const val = e.target.value;
+      pomoState.targetScheduleId = val;
+      pomoState.targetManualEmpty = !val;
+    });
+    el.pomoPresetRow?.querySelectorAll(".pomo-preset-chip").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setPomodoroPreset(Number(btn.dataset.pomoMin), btn.dataset.pomoMode || "focus");
+      });
+    });
+    el.pomoToggleBtn?.addEventListener("click", () => {
+      if (pomoState.isRunning) {
+        pausePomodoro();
+      } else {
+        startPomodoro();
+      }
+    });
+    el.pomoPlus5Btn?.addEventListener("click", () => extendPomodoroMinutes(5));
+    el.pomoResetBtn?.addEventListener("click", () => resetPomodoro());
+
+    el.mitQuickPickToggleBtn?.addEventListener("click", () => {
+      mitQuickPickOpen = !mitQuickPickOpen;
+      renderMitQuickPickTray();
+    });
+
+    el.ddayToggleFormBtn?.addEventListener("click", () => {
+      if (!el.addDdayForm) return;
+      const willOpen = el.addDdayForm.classList.contains("hidden");
+      el.addDdayForm.classList.toggle("hidden", !willOpen);
+      if (willOpen) {
+        if (el.newDdayDate && !el.newDdayDate.value) {
+          el.newDdayDate.value = currentDate;
+        }
+        el.newDdayTitle?.focus();
+      }
+    });
+    el.addDdayForm?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const title = el.newDdayTitle?.value.trim() || "";
+      const date = el.newDdayDate?.value || "";
+      if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+      const icon = el.newDdayIcon?.value.trim() || "📌";
+      if (!Array.isArray(prefs.ddays)) prefs.ddays = [];
+      prefs.ddays.push({ id: PlannerAPI.uid("dday"), icon, title, date });
+      PlannerAPI.savePrefs(prefs);
+      el.newDdayTitle.value = "";
+      el.addDdayForm.classList.add("hidden");
+      renderDdayWidget();
+      showToast(`⏳ '${title}' D-Day를 추가했습니다.`, icon);
+    });
+
+    el.habitToggleFormBtn?.addEventListener("click", () => {
+      habitEditMode = !habitEditMode;
+      renderHabitsWidget();
+      if (habitEditMode) el.newHabitTitle?.focus();
+    });
+    el.addHabitForm?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const title = el.newHabitTitle?.value.trim() || "";
+      if (!title) return;
+      const icon = el.newHabitIcon?.value.trim() || "💧";
+      const target = clamp(Math.round(Number(el.newHabitTarget?.value) || 1), 1, 99);
+      if (!Array.isArray(prefs.habits)) prefs.habits = [];
+      prefs.habits.push({ id: PlannerAPI.uid("hb"), icon, title, target });
+      PlannerAPI.savePrefs(prefs);
+      el.newHabitTitle.value = "";
+      el.newHabitTarget.value = "1";
+      renderHabitsWidget();
+      showToast(`${icon} '${title}' 습관을 추가했습니다.`, icon);
+    });
+
     // 우측 유튜브 볼 리스트 (로컬 위젯)
     el.addYoutubeForm.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -5320,6 +6138,7 @@
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
+      if (pomoState.isRunning) tickPomodoro();
       syncIfChanged(true, { force: true });
       syncCloudPrefs();
       setupRealtimeSync();

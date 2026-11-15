@@ -2638,6 +2638,560 @@ html[data-theme="light"] .q-btn.del:hover {
   white-space: nowrap;
 }
 
+.widget-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 시간 예산 요약 바 */
+.time-budget-bar {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-bottom: 9px;
+}
+
+.time-budget-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 5px 4px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.time-budget-label {
+  font-size: 9.5px;
+  color: var(--text-dim);
+}
+
+.time-budget-val {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.time-budget-chip.is-done .time-budget-val {
+  color: var(--success);
+}
+
+.time-budget-chip.is-free .time-budget-val {
+  color: var(--accent-hover);
+}
+
+/* 1순위: 뽀모도로 집중 타이머 위젯 */
+.pomo-target-select {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+  outline: none;
+  text-overflow: ellipsis;
+}
+
+.pomo-target-select:focus {
+  border-color: var(--accent);
+}
+
+.pomo-display-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 10px 10px 8px;
+  margin-bottom: 8px;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.pomo-display-box.is-running {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), var(--surface));
+}
+
+.pomo-display-box.is-break.is-running {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), var(--surface));
+}
+
+.pomo-display-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.pomo-mode-pill {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+}
+
+.pomo-display-box.is-break .pomo-mode-pill {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+}
+
+html[data-theme="light"] .pomo-mode-pill {
+  color: #dc2626;
+}
+
+html[data-theme="light"] .pomo-display-box.is-break .pomo-mode-pill {
+  color: #059669;
+}
+
+.pomo-time-readout {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.pomo-progress-track {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.pomo-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ef4444, #f97316);
+  transition: width 0.3s linear;
+}
+
+.pomo-display-box.is-break .pomo-progress-fill {
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.pomo-preset-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.pomo-preset-chip {
+  padding: 4px 3px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: background-color 0.14s, color 0.14s, border-color 0.14s;
+}
+
+.pomo-preset-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.pomo-preset-chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+.pomo-controls-row {
+  display: flex;
+  gap: 5px;
+}
+
+.pomo-main-btn {
+  flex: 1;
+  font-weight: 700;
+}
+
+.pomo-main-btn.is-running {
+  background: var(--now);
+}
+
+.now-banner.is-pomo-running .now-remaining {
+  color: #fca5a5;
+  font-weight: 800;
+}
+
+/* 2순위: 오늘의 핵심 목표 Top 3 (MIT) */
+.mit-quick-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 6px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+}
+
+.mit-quick-chip {
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: var(--surface-3);
+  color: var(--text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background-color 0.14s, color 0.14s;
+}
+
+.mit-quick-chip:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.mit-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mit-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: border-color 0.14s, opacity 0.14s;
+}
+
+.mit-slot-row:focus-within {
+  border-color: var(--accent);
+}
+
+.mit-slot-row.is-done {
+  opacity: 0.56;
+}
+
+.mit-rank-badge {
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-size: 10px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.mit-slot-row.is-done .mit-rank-badge {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--success);
+}
+
+.mit-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  outline: none;
+}
+
+.mit-slot-row.is-done .mit-input {
+  text-decoration: line-through;
+}
+
+.mit-linked-dot {
+  font-size: 10px;
+  color: var(--accent-hover);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.mit-clear-btn {
+  padding: 1px 5px;
+  font-size: 10px;
+  color: var(--text-dim);
+  border-radius: 4px;
+}
+
+.mit-clear-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+/* 2순위: D-Day 카운트다운 위젯 */
+.dday-add-form,
+.habit-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 8px;
+  padding: 7px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.dday-form-row,
+.habit-form-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.icon-input-sm {
+  width: 34px;
+  flex-shrink: 0;
+  text-align: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  font-size: 12px;
+  outline: none;
+}
+
+.dday-form-row input:not(.icon-input-sm),
+.habit-form-row input:not(.icon-input-sm) {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font-size: 11.5px;
+  outline: none;
+}
+
+.habit-form-row input[type="number"] {
+  flex: 0 0 48px;
+  text-align: center;
+}
+
+.dday-list,
+.habit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dday-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color 0.14s, transform 0.12s;
+}
+
+.dday-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.dday-card-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+}
+
+.dday-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.dday-text-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dday-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dday-card-date {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.dday-card-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.dday-badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.dday-badge.is-urgent {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+
+.dday-badge.is-dday {
+  background: rgba(239, 68, 68, 0.22);
+  color: #f87171;
+}
+
+.dday-badge.is-past {
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+
+html[data-theme="light"] .dday-badge.is-urgent {
+  color: #b45309;
+}
+
+html[data-theme="light"] .dday-badge.is-dday {
+  color: #dc2626;
+}
+
+/* 3순위: 데일리 미니 습관 트래커 */
+.habit-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.14s, background-color 0.14s;
+}
+
+.habit-card:hover {
+  border-color: var(--accent);
+}
+
+.habit-card.is-completed {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.habit-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.habit-card-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 0;
+  flex: 1;
+}
+
+.habit-card-name span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.habit-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.habit-step-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+.habit-step-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.habit-count-pill {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: center;
+}
+
+.habit-card.is-completed .habit-count-pill {
+  color: var(--success);
+}
+
+.habit-progress-mini {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.habit-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.2s ease, background-color 0.2s ease;
+}
+
+.habit-card.is-completed .habit-progress-fill {
+  background: var(--success);
+}
+
+.del-habit-btn {
+  display: none;
+}
+
+.habit-list.is-editing .del-habit-btn {
+  display: inline-flex;
+}
+
 /* 유튜브 위젯 */
 .yt-add-form {
   display: flex;
@@ -4046,7 +4600,11 @@ html[data-theme="light"] .modal-backdrop {
   .field select,
   .field textarea,
   .quick-add-box input,
-  .quick-add-row select {
+  .quick-add-row select,
+  .pomo-target-select,
+  .mit-input,
+  .dday-form-row input,
+  .habit-form-row input {
     font-size: 16px;
   }
   .inline-check,
@@ -4170,5 +4728,11 @@ html[data-theme="light"] .modal-backdrop {
   .event-check {
     width: 18px;
     height: 18px;
+  }
+
+  .habit-step-btn {
+    width: 26px;
+    height: 26px;
+    font-size: 13px;
   }
 }
