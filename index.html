@@ -137,6 +137,7 @@
             </svg>
           </div>
           <div id="nowEventTitle" class="now-title">일정을 불러오는 중...</div>
+          <button id="nowSubBadge" type="button" class="island-sub-badge hidden" title="동시 진행 중인 다른 일정 전환"></button>
           <span id="nowRemaining" class="now-remaining"></span>
           <span class="island-chevron" aria-hidden="true">▾</span>
         </div>
@@ -150,6 +151,7 @@
 
         <!-- 확장 컨트롤 센터 (호버 / 클릭 고정 시 오픈) -->
         <div id="islandExpanded" class="island-expanded">
+          <div id="islandActiveTabs" class="island-active-tabs hidden" role="tablist" aria-label="동시 진행 중인 일정 선택"></div>
           <div class="island-exp-header">
             <div class="island-exp-badges">
               <span id="islandTypeBadge" class="island-pill-badge">일정</span>

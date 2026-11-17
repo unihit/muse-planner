@@ -73,6 +73,8 @@
   let islandCollapseTimer = null;
   const ISLAND_AUTO_COLLAPSE_MS = 5000;
   let lastNowRenderMin = -1;
+  let selectedNowEventId = null;
+  let lastActiveIdsKey = "";
   let isBackgroundSyncing = false;
   let lastSyncCheckAt = 0;
   let lastUserMutationAt = 0;
@@ -122,8 +124,10 @@
     islandLiveText: document.getElementById("islandLiveText"),
     islandLiveActionBtn: document.getElementById("islandLiveActionBtn"),
     islandExpanded: document.getElementById("islandExpanded"),
+    islandActiveTabs: document.getElementById("islandActiveTabs"),
     islandTypeBadge: document.getElementById("islandTypeBadge"),
     nowEventTitle: document.getElementById("nowEventTitle"),
+    nowSubBadge: document.getElementById("nowSubBadge"),
     nowEventTime: document.getElementById("nowEventTime"),
     islandElapsedText: document.getElementById("islandElapsedText"),
     nowProgressBar: document.getElementById("nowProgressBar"),
@@ -3793,21 +3797,126 @@
       el.nowLine.classList.add("hidden");
     }
 
-    const activeEv = isToday
-      ? schedules.find((e) => {
-          if (!e.hasStartAt || isEffectiveDone(e) || e.type === "reminder") return false;
-          const end = e.hasEndAt && e.endMin !== null ? e.endMin : e.startMin + 30;
-          return e.startMin <= nowMin && nowMin < end;
-        }) ||
-        schedules.find((e) => {
-          if (!e.hasStartAt || e.type !== "reminder") return false;
+    const getEventActiveEnd = (e) =>
+      e.type === "reminder"
+        ? e.startMin + 10
+        : e.hasEndAt && e.endMin !== null
+          ? e.endMin
+          : e.startMin + 30;
+
+    const activeNonReminders = isToday
+      ? schedules
+          .filter((e) => {
+            if (!e.hasStartAt || isEffectiveDone(e) || e.type === "reminder") return false;
+            const end = getEventActiveEnd(e);
+            return e.startMin <= nowMin && nowMin < end;
+          })
+          .sort((a, b) => {
+            // 1) 가장 최근에 시작한 일정 우선 (startMin 내림차순)
+            if (b.startMin !== a.startMin) return b.startMin - a.startMin;
+            // 2) 할 일(task) 우선
+            const aTask = a.type === "task" ? 1 : 0;
+            const bTask = b.type === "task" ? 1 : 0;
+            if (bTask !== aTask) return bTask - aTask;
+            // 3) 구간이 더 짧은(세부적인) 일정 우선
+            const aDur = getEventActiveEnd(a) - a.startMin;
+            const bDur = getEventActiveEnd(b) - b.startMin;
+            return aDur - bDur;
+          })
+      : [];
+
+    const activeReminders = isToday
+      ? schedules.filter((e) => {
+          if (!e.hasStartAt || isEffectiveDone(e) || e.type !== "reminder") return false;
           return e.startMin <= nowMin && nowMin < e.startMin + 10;
         })
-      : null;
+      : [];
+
+    const activeList = activeNonReminders.length > 0
+      ? [...activeNonReminders, ...activeReminders]
+      : activeReminders;
+
+    const currentActiveKey = activeList.map((e) => e.id).join(",");
+    if (currentActiveKey !== lastActiveIdsKey) {
+      lastActiveIdsKey = currentActiveKey;
+      selectedNowEventId = activeList[0]?.id ?? null;
+    }
+
+    const activeEv = activeList.find((e) => e.id === selectedNowEventId) || activeList[0] || null;
+    if (activeEv) {
+      selectedNowEventId = activeEv.id;
+    }
+
+    const activeIdSet = new Set(activeList.map((e) => e.id));
+
+    if (el.nowSubBadge) {
+      if (activeList.length > 1 && activeEv) {
+        const otherEvs = activeList.filter((e) => e.id !== activeEv.id);
+        const subLabel = otherEvs.length === 1
+          ? `+1 ${otherEvs[0].title}`
+          : `+${otherEvs.length} ${otherEvs[0].title}`;
+        el.nowSubBadge.textContent = subLabel;
+        el.nowSubBadge.title = `동시 진행: ${otherEvs.map((e) => e.title).join(", ")} (클릭하여 전환)`;
+        el.nowSubBadge.classList.remove("hidden");
+        el.nowSubBadge.onclick = (e) => {
+          e.stopPropagation();
+          const idx = activeList.findIndex((item) => item.id === activeEv.id);
+          const nextItem = activeList[(idx + 1) % activeList.length];
+          if (nextItem) {
+            selectedNowEventId = nextItem.id;
+            if (el.nowBanner.classList.contains("is-expanded")) {
+              setIslandExpanded(true);
+            }
+            renderNowState();
+          }
+        };
+      } else {
+        el.nowSubBadge.classList.add("hidden");
+        el.nowSubBadge.textContent = "";
+        el.nowSubBadge.onclick = null;
+      }
+    }
+
+    if (el.islandActiveTabs) {
+      if (activeList.length > 1 && activeEv) {
+        el.islandActiveTabs.classList.remove("hidden");
+        el.islandActiveTabs.innerHTML = "";
+        activeList.forEach((ev) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          const isSelected = ev.id === activeEv.id;
+          const typeCls = ev.type === "task" ? "is-task" : ev.type === "reminder" ? "is-reminder" : "is-event";
+          btn.className = `island-tab-chip ${typeCls}${isSelected ? " is-selected" : ""}`;
+          btn.setAttribute("role", "tab");
+          btn.setAttribute("aria-selected", isSelected ? "true" : "false");
+          btn.title = `${ev.title} (${minToTimeStr(ev.startMin)}${ev.hasEndAt && ev.endMin !== null ? ` ~ ${minToTimeStr(ev.endMin)}` : ""})`;
+
+          const evEnd = getEventActiveEnd(ev);
+          const evRemain = Math.max(0, evEnd - nowMin);
+          const remainLabel = ev.type === "reminder" ? "알림" : `${evRemain}m`;
+
+          btn.innerHTML =
+            `<span class="tab-dot" aria-hidden="true"></span>` +
+            `<span class="tab-title">${escapeHtml(ev.title)}</span>` +
+            `<span class="tab-remain">${remainLabel}</span>`;
+
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            selectedNowEventId = ev.id;
+            setIslandExpanded(true);
+            renderNowState();
+          });
+          el.islandActiveTabs.appendChild(btn);
+        });
+      } else {
+        el.islandActiveTabs.classList.add("hidden");
+        el.islandActiveTabs.innerHTML = "";
+      }
+    }
 
     const nextEv = isToday
       ? schedules
-          .filter((e) => e.hasStartAt && !isEffectiveDone(e) && e.startMin > nowMin)
+          .filter((e) => e.hasStartAt && !isEffectiveDone(e) && !activeIdSet.has(e.id) && e.startMin > nowMin)
           .sort((a, b) => a.startMin - b.startMin)[0]
       : null;
 
@@ -3815,11 +3924,7 @@
 
     if (activeEv) {
       const isReminder = activeEv.type === "reminder";
-      const activeEnd = isReminder
-        ? activeEv.startMin + 10
-        : activeEv.hasEndAt && activeEv.endMin !== null
-          ? activeEv.endMin
-          : activeEv.startMin + 30;
+      const activeEnd = getEventActiveEnd(activeEv);
       const total = Math.max(1, activeEnd - activeEv.startMin);
       const elapsed = clamp(nowMin - activeEv.startMin, 0, total);
       const pct = Math.round((elapsed / total) * 100);
@@ -3921,11 +4026,7 @@
     }
 
     // 다음 일정 & 남은 알림 하단 스트립
-    const upNextEv = activeEv
-      ? schedules
-          .filter((e) => e.hasStartAt && !isEffectiveDone(e) && e.id !== activeEv.id && e.startMin >= activeEv.startMin)
-          .sort((a, b) => a.startMin - b.startMin)[0]
-      : nextEv;
+    const upNextEv = nextEv;
 
     if (activeEv && upNextEv) {
       el.islandNextInfo.innerHTML = `<span>다음 · <strong>${escapeHtml(upNextEv.title)}</strong></span><span>${minToTimeStr(upNextEv.startMin)}</span>`;
@@ -3943,9 +4044,9 @@
         (e) =>
           e.type === "reminder" &&
           !e.done &&
-          e.id !== activeEv?.id &&
+          !activeIdSet.has(e.id) &&
           (!isToday || !e.hasStartAt || e.startMin >= nowMin)
-      ) || schedules.find((e) => e.type === "reminder" && !e.done && e.id !== activeEv?.id);
+      ) || schedules.find((e) => e.type === "reminder" && !e.done && !activeIdSet.has(e.id));
 
     if (remEv) {
       el.islandReminderInfo.classList.remove("hidden");
