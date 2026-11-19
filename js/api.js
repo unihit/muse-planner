@@ -30,8 +30,10 @@
 
   const DEFAULT_SETTINGS = {
     mode: "supabase", // 'supabase' | 'local'
-    localExplicit: false
+    localExplicit: false,
+    supabaseExplicit: false
   };
+  const LOCAL_DEMO_SEEDED_KEY = "muse_planner_local_demo_seeded_v1";
 
   const DEFAULT_PREFS = {
     theme: "dark",
@@ -163,17 +165,46 @@
 
   /* -------------------- 설정 & 환경변수 분리 로드 -------------------- */
 
+  function isLocalDevEnvironment() {
+    try {
+      const proto = window.location?.protocol;
+      const host = String(window.location?.hostname || "").toLowerCase();
+      if (proto === "file:") return true;
+      if (!host) return false;
+      if (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".local")) {
+        return true;
+      }
+      if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+      if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+      const m172 = host.match(/^172\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+      if (m172 && Number(m172[1]) >= 16 && Number(m172[1]) <= 31) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   function getSettings() {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && parsed.mode === "local" && parsed.localExplicit === true) {
-          return { mode: "local", localExplicit: true };
+          return { mode: "local", localExplicit: true, supabaseExplicit: false };
+        }
+        if (parsed && parsed.mode === "supabase" && parsed.supabaseExplicit === true) {
+          return { mode: "supabase", localExplicit: false, supabaseExplicit: true };
         }
       }
     } catch {
       // ignore storage errors
+    }
+    if (isLocalDevEnvironment()) {
+      return {
+        mode: "local",
+        localExplicit: true,
+        supabaseExplicit: false
+      };
     }
     return {
       ...DEFAULT_SETTINGS,
@@ -185,7 +216,8 @@
     const mode = next?.mode === "local" ? "local" : "supabase";
     const merged = {
       mode,
-      localExplicit: mode === "local" ? Boolean(next?.localExplicit) : false
+      localExplicit: mode === "local" ? Boolean(next?.localExplicit) : false,
+      supabaseExplicit: mode === "supabase" ? Boolean(next?.supabaseExplicit) : false
     };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
     return merged;
@@ -482,6 +514,54 @@
     localStorage.setItem(BACKLOG_STORAGE_KEY, JSON.stringify(sortSchedules(items)));
   }
 
+  function ensureLocalDemoSeed(dateStr) {
+    if (!isLocalDevEnvironment()) return;
+    try {
+      if (localStorage.getItem(LOCAL_DEMO_SEEDED_KEY)) return;
+      if (loadLocalSchedules(dateStr).length > 0) return;
+      localStorage.setItem(LOCAL_DEMO_SEEDED_KEY, "1");
+
+      const demoItems = [
+        { start: "07:00", end: "07:30", title: "출근준비", type: "schedule", source: "app", template_id: "demo-rt-morning" },
+        { start: "08:00", end: "08:15", title: "✈️ 디코 제출 및 항공권 체크", type: "task", source: "muse" },
+        { start: "09:00", end: "09:30", title: "오전 스프린트 데일리 스크럼", type: "schedule", source: "muse" },
+        { start: "09:00", end: "09:30", title: "디자인 시스템 시안 리뷰", type: "schedule", source: "muse" },
+        { start: "12:00", end: "12:30", title: "코드 리뷰 & PR 머지", type: "schedule", source: "muse" },
+        { start: "12:00", end: "12:30", title: "기획서 피드백 반영", type: "schedule", source: "muse" },
+        { start: "12:00", end: "13:00", title: "점심", type: "schedule", source: "app", template_id: "demo-rt-lunch" },
+        { start: "12:30", end: "13:00", title: "오후 배포 체크리스트 점검", type: "task", source: "muse" },
+        { start: "14:00", end: null, title: "📦 무신사 체험단 발송 예정 (온살 펩타이드 세럼)", type: "reminder", source: "muse" }
+      ];
+
+      const nowIso = new Date().toISOString();
+      const seeded = demoItems.map((item, idx) => {
+        const startMin = hhmmToMinutes(item.start);
+        const endMin = item.end ? hhmmToMinutes(item.end) : null;
+        return normalizeScheduleRecord(
+          {
+            id: uid(`demo${idx}`),
+            date: dateStr,
+            start_at: kstMinutesToIso(dateStr, startMin),
+            end_at: endMin !== null ? kstMinutesToIso(dateStr, endMin) : null,
+            title: item.title,
+            type: item.type,
+            done: false,
+            done_at: null,
+            source: item.source,
+            memo: "",
+            template_id: item.template_id ?? null,
+            created_at: nowIso,
+            updated_at: nowIso
+          },
+          dateStr
+        );
+      });
+      saveLocalSchedules(dateStr, seeded);
+    } catch {
+      // ignore storage errors
+    }
+  }
+
   /* -------------------- 우측 보조 위젯 (로컬 저장) -------------------- */
 
   function normalizeMitList(rawList) {
@@ -741,7 +821,7 @@
     });
     if (error) throw new Error(error.message || "로그인에 실패했습니다.");
     const cur = getSettings();
-    saveSettings({ ...cur, mode: "supabase", localExplicit: false });
+    saveSettings({ ...cur, mode: "supabase", localExplicit: false, supabaseExplicit: true });
     return data?.session ?? null;
   }
 
@@ -785,6 +865,7 @@
       setCachedSchedules(dateStr, normalized);
       return normalized;
     }
+    ensureLocalDemoSeed(dateStr);
     if (applyRoutines) {
       applyLocalRoutinesForDate(dateStr);
     }

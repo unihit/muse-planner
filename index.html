@@ -53,6 +53,7 @@
         </label>
         <p id="authGateError" class="auth-error hidden"></p>
         <button id="authGateSubmitBtn" type="submit" class="btn-primary auth-submit-btn">로그인</button>
+        <button id="authGateLocalBtn" type="button" class="btn-secondary auth-submit-btn">로그인 없이 로컬 모드로 바로 시작</button>
       </form>
     </div>
   </div>
@@ -592,20 +593,80 @@
             <input id="editTimedCheck" type="checkbox" checked />
             <span>시작 시각 지정 (체크 해제 시 시간 미정)</span>
           </label>
-          <div id="editTimeFields" class="field-row">
-            <label class="field">
-              <span>시작 시각</span>
-              <input id="editStart" type="time" />
-            </label>
-            <div class="field">
-              <span class="end-label-row">
-                <label for="editEnd">종료 시각</label>
-                <label class="inline-check-sm">
-                  <input id="editHasEndCheck" type="checkbox" checked />
-                  <span>사용</span>
-                </label>
-              </span>
-              <input id="editEnd" type="time" />
+          <div id="editTimeFields" class="time-fields-wrap">
+            <div class="field-row time-inputs-row">
+              <div class="field time-field" id="editStartField">
+                <div class="time-label-row">
+                  <label for="editStartPickerBtn">시작 시각</label>
+                  <div class="time-step-pills" role="group" aria-label="시작 시각 빠른 조절">
+                    <button type="button" class="time-step-btn" data-time-step="-15" title="15분 앞당기기">-15m</button>
+                    <button type="button" class="time-step-btn" data-time-step="15" title="15분 늦추기">+15m</button>
+                    <button type="button" class="time-step-btn is-now" data-time-step="now" title="현재 시각으로 맞추기">지금</button>
+                  </div>
+                </div>
+                <input id="editStart" type="time" class="native-time-sr" tabindex="-1" aria-hidden="true" />
+                <button type="button" id="editStartPickerBtn" class="time-picker-trigger" aria-haspopup="dialog" aria-expanded="false">
+                  <span class="tp-trigger-main" id="editStartDisplay">오전 09:00</span>
+                  <span class="tp-trigger-sub" id="editStartSub">09:00</span>
+                  <span class="tp-trigger-icon" aria-hidden="true">🕒</span>
+                </button>
+              </div>
+              <div class="field time-field" id="editEndField">
+                <span class="end-label-row">
+                  <label for="editEndPickerBtn">종료 시각 <span id="editDurationBadge" class="time-dur-badge">30분</span></label>
+                  <label class="inline-check-sm">
+                    <input id="editHasEndCheck" type="checkbox" checked />
+                    <span>사용</span>
+                  </label>
+                </span>
+                <input id="editEnd" type="time" class="native-time-sr" tabindex="-1" aria-hidden="true" />
+                <button type="button" id="editEndPickerBtn" class="time-picker-trigger" aria-haspopup="dialog" aria-expanded="false">
+                  <span class="tp-trigger-main" id="editEndDisplay">오전 09:30</span>
+                  <span class="tp-trigger-sub" id="editEndSub">09:30</span>
+                  <span class="tp-trigger-icon" aria-hidden="true">🕒</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="editDurationBar" class="duration-chip-bar" role="group" aria-label="소요 시간 빠른 선택">
+              <span class="duration-chip-label">소요 시간</span>
+              <div class="duration-chip-list">
+                <button type="button" class="dur-chip" data-dur="15">15분</button>
+                <button type="button" class="dur-chip" data-dur="30">30분</button>
+                <button type="button" class="dur-chip" data-dur="45">45분</button>
+                <button type="button" class="dur-chip" data-dur="60">1시간</button>
+                <button type="button" class="dur-chip" data-dur="90">1.5시간</button>
+                <button type="button" class="dur-chip" data-dur="120">2시간</button>
+                <button type="button" class="dur-chip" data-dur="none">종료 없음</button>
+              </div>
+            </div>
+
+            <div id="snapTimePopover" class="snap-time-popover hidden" role="dialog" aria-label="시각 빠른 선택">
+              <div class="snap-popover-head">
+                <span id="snapPopoverTitle" class="snap-popover-title">시작 시각 선택</span>
+                <div class="snap-popover-presets">
+                  <button type="button" class="snap-preset-btn" data-quick-time="09:00">09:00</button>
+                  <button type="button" class="snap-preset-btn" data-quick-time="12:00">12:00</button>
+                  <button type="button" class="snap-preset-btn" data-quick-time="14:00">14:00</button>
+                  <button type="button" class="snap-preset-btn" data-quick-time="18:00">18:00</button>
+                  <button type="button" class="snap-preset-btn" data-quick-time="21:00">21:00</button>
+                </div>
+                <button type="button" id="snapPopoverCloseBtn" class="snap-popover-close" aria-label="시각 선택 닫기">✕</button>
+              </div>
+              <div id="snapHourGrid" class="snap-hour-rows"></div>
+              <div class="snap-min-bar">
+                <span class="snap-row-tag">분</span>
+                <div class="snap-min-btns">
+                  <button type="button" class="snap-min-btn" data-min="0">:00</button>
+                  <button type="button" class="snap-min-btn" data-min="15">:15</button>
+                  <button type="button" class="snap-min-btn" data-min="30">:30</button>
+                  <button type="button" class="snap-min-btn" data-min="45">:45</button>
+                </div>
+                <div class="snap-min-fine">
+                  <button type="button" class="snap-fine-btn" data-fine="-5">-5분</button>
+                  <button type="button" class="snap-fine-btn" data-fine="5">+5분</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

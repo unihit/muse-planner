@@ -250,9 +250,23 @@
     editBacklogCheck: document.getElementById("editBacklogCheck"),
     editTimedCheck: document.getElementById("editTimedCheck"),
     editTimeFields: document.getElementById("editTimeFields"),
+    editStartField: document.getElementById("editStartField"),
+    editEndField: document.getElementById("editEndField"),
     editStart: document.getElementById("editStart"),
+    editStartPickerBtn: document.getElementById("editStartPickerBtn"),
+    editStartDisplay: document.getElementById("editStartDisplay"),
+    editStartSub: document.getElementById("editStartSub"),
     editHasEndCheck: document.getElementById("editHasEndCheck"),
     editEnd: document.getElementById("editEnd"),
+    editEndPickerBtn: document.getElementById("editEndPickerBtn"),
+    editEndDisplay: document.getElementById("editEndDisplay"),
+    editEndSub: document.getElementById("editEndSub"),
+    editDurationBadge: document.getElementById("editDurationBadge"),
+    editDurationBar: document.getElementById("editDurationBar"),
+    snapTimePopover: document.getElementById("snapTimePopover"),
+    snapPopoverTitle: document.getElementById("snapPopoverTitle"),
+    snapPopoverCloseBtn: document.getElementById("snapPopoverCloseBtn"),
+    snapHourGrid: document.getElementById("snapHourGrid"),
     editDone: document.getElementById("editDone"),
     editMemo: document.getElementById("editMemo"),
     deleteEventModalBtn: document.getElementById("deleteEventModalBtn"),
@@ -314,6 +328,7 @@
     authGatePassword: document.getElementById("authGatePassword"),
     authGateError: document.getElementById("authGateError"),
     authGateSubmitBtn: document.getElementById("authGateSubmitBtn"),
+    authGateLocalBtn: document.getElementById("authGateLocalBtn"),
     apiSettingsForm: document.getElementById("apiSettingsForm"),
     supabaseFields: document.getElementById("supabaseFields"),
     sbSignedInBox: document.getElementById("sbSignedInBox"),
@@ -491,6 +506,15 @@
     }
     const dur = ev.endMin - ev.startMin;
     return `${startStr} - ${minToTimeStr(ev.endMin)} (${dur}분)`;
+  }
+
+  function formatEventTimeShort(ev) {
+    if (!ev.hasStartAt) return "시간 미정";
+    const startStr = minToTimeStr(ev.startMin);
+    if (!ev.hasEndAt || ev.endMin === null) {
+      return startStr;
+    }
+    return `${startStr}–${minToTimeStr(ev.endMin)}`;
   }
 
   function escapeHtml(str = "") {
@@ -2828,10 +2852,19 @@
       const bottom = endMinToY(visualEnd, visualStart);
       const height = Math.max(26, bottom - top);
       const isCompact = height < 40;
+      const isTall = height >= 54;
 
       const layout = cols.get(ev.id) || { col: 0, totalCols: 1 };
       const widthPct = 100 / layout.totalCols;
       const leftPct = layout.col * widthPct;
+      const colAlign =
+        layout.totalCols <= 1
+          ? "single"
+          : layout.col === 0
+            ? "start"
+            : layout.col === layout.totalCols - 1
+              ? "end"
+              : "middle";
 
       const { isNow, isPast } = getEventTimeState(ev);
       const isFilteredOut = activeTypeFilter !== "all" && ev.type !== activeTypeFilter;
@@ -2843,6 +2876,9 @@
         "event-block",
         `type-${ev.type}`,
         isCompact ? "is-compact" : "",
+        isTall ? "is-tall" : "",
+        layout.totalCols >= 2 ? "is-multi-col" : "",
+        layout.totalCols >= 3 ? "is-dense-col" : "",
         ev.visualEndMin >= 1380 ? "is-near-bottom" : "",
         isNow ? "is-now" : "",
         isPast ? "is-past" : "",
@@ -2854,12 +2890,15 @@
         .join(" ");
 
       block.dataset.id = ev.id;
+      block.dataset.cols = String(layout.totalCols);
+      block.dataset.colAlign = colAlign;
       block.style.top = `${top}px`;
       block.style.height = `${height - 2}px`;
       block.style.left = `calc(${leftPct}% + 2px)`;
       block.style.width = `calc(${widthPct}% - 4px)`;
 
       const timeText = formatEventTimeLabel(ev);
+      const shortTimeText = formatEventTimeShort(ev);
       const reminderBadge =
         ev.type === "reminder"
           ? `<span class="badge-reminder">🔔 ${minToTimeStr(ev.startMin)}</span>`
@@ -2885,17 +2924,29 @@
           </div>
         </div>
         <div class="event-sub-row">
-          <span class="event-time-text">${escapeHtml(timeText)}</span>
+          <span class="event-time-text">
+            <span class="event-time-full">${escapeHtml(timeText)}</span>
+            <span class="event-time-short">${escapeHtml(shortTimeText)}</span>
+          </span>
         </div>
         <div class="event-quick-actions">
-          <button type="button" class="q-btn" data-act="minus15" title="15분 줄이기">-15m</button>
-          <button type="button" class="q-btn" data-act="plus15" title="15분 늘리기">+15m</button>
-          <button type="button" class="q-btn q-icon" data-act="edit" title="편집" aria-label="일정 편집">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-          </button>
-          <button type="button" class="q-btn q-icon del" data-act="delete" title="삭제" aria-label="일정 삭제">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>
-          </button>
+          <div class="event-quick-info">
+            <div class="event-quick-title-row">
+              <span class="event-quick-title">${PlannerAPI.isScheduleSkipped(ev) ? "↷ 건너뜀 · " : ""}${escapeHtml(ev.title)}</span>
+              <div class="event-quick-badges">${routineBadge}${typeBadge}${srcBadge}</div>
+            </div>
+            <div class="event-quick-time">${escapeHtml(timeText)}</div>
+          </div>
+          <div class="event-quick-btns">
+            <button type="button" class="q-btn" data-act="minus15" title="15분 줄이기">-15m</button>
+            <button type="button" class="q-btn" data-act="plus15" title="15분 늘리기">+15m</button>
+            <button type="button" class="q-btn q-icon" data-act="edit" title="편집" aria-label="일정 편집">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+            </button>
+            <button type="button" class="q-btn q-icon del" data-act="delete" title="삭제" aria-label="일정 삭제">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>
+            </button>
+          </div>
         </div>
         <div class="resize-handle bottom" title="아래로 끌어 종료 시각 조절"></div>
       `;
@@ -3144,7 +3195,7 @@
 
     const startPointerOp = (mode, downEvent) => {
       if (downEvent.button !== 0 && downEvent.pointerType !== "touch") return;
-      if (downEvent.target.closest("input, button")) return;
+      if (downEvent.target.closest("input, button, .event-quick-actions")) return;
 
       const isTouch = downEvent.pointerType === "touch";
       const isAlreadySelected = selectedEventId === ev.id;
@@ -3203,6 +3254,9 @@
       selectedEventId = ev.id;
 
       const timeSpan = block.querySelector(".event-time-text");
+      const timeFullSpan = block.querySelector(".event-time-full");
+      const timeShortSpan = block.querySelector(".event-time-short");
+      const quickTimeSpan = block.querySelector(".event-quick-time");
 
       const cleanupListeners = () => {
         window.removeEventListener("pointermove", onMove);
@@ -3293,10 +3347,20 @@
         const height = Math.max(26, endMinToY(previewVisualEnd, visualStart) - top);
         block.style.top = `${top}px`;
         block.style.height = `${height - 2}px`;
-        if (timeSpan) {
-          timeSpan.textContent = previewHasEnd
-            ? `${minToTimeStr(previewStart)} - ${minToTimeStr(previewVisualEnd)} (${previewVisualEnd - previewStart}분)`
-            : minToTimeStr(previewStart);
+        const liveFullTime = previewHasEnd
+          ? `${minToTimeStr(previewStart)} - ${minToTimeStr(previewVisualEnd)} (${previewVisualEnd - previewStart}분)`
+          : minToTimeStr(previewStart);
+        const liveShortTime = previewHasEnd
+          ? `${minToTimeStr(previewStart)}–${minToTimeStr(previewVisualEnd)}`
+          : minToTimeStr(previewStart);
+        if (timeFullSpan && timeShortSpan) {
+          timeFullSpan.textContent = liveFullTime;
+          timeShortSpan.textContent = liveShortTime;
+        } else if (timeSpan) {
+          timeSpan.textContent = liveFullTime;
+        }
+        if (quickTimeSpan) {
+          quickTimeSpan.textContent = liveFullTime;
         }
         updateCascadePreview(previewStart, previewHasEnd, previewVisualEnd, leavingTimeline);
       };
@@ -4912,6 +4976,191 @@
 
   /* -------------------- 모달: 일정 생성 / 편집 -------------------- */
 
+  let activeTimePickerTarget = null; // 'start' | 'end' | null
+  let modalCurrentDurationMin = 30;
+
+  function formatKoreanAmPmTime(totalMin) {
+    const m = clamp(Math.round(Number(totalMin) || 0), 0, 1439);
+    const h24 = Math.floor(m / 60);
+    const mm = String(m % 60).padStart(2, "0");
+    const period = h24 < 12 ? "오전" : "오후";
+    const h12 = String(h24 % 12 || 12).padStart(2, "0");
+    return {
+      main: `${period} ${h12}:${mm}`,
+      sub: `${String(h24).padStart(2, "0")}:${mm}`
+    };
+  }
+
+  function formatDurationKorean(durMin) {
+    if (!Number.isFinite(durMin) || durMin <= 0) return "없음";
+    if (durMin < 60) return `${durMin}분`;
+    const h = Math.floor(durMin / 60);
+    const rem = durMin % 60;
+    return rem === 0 ? `${h}시간` : `${h}시간 ${rem}분`;
+  }
+
+  function closeSnapTimePopover() {
+    activeTimePickerTarget = null;
+    el.snapTimePopover?.classList.add("hidden");
+    el.editStartPickerBtn?.classList.remove("is-open");
+    el.editEndPickerBtn?.classList.remove("is-open");
+    el.editStartPickerBtn?.setAttribute("aria-expanded", "false");
+    el.editEndPickerBtn?.setAttribute("aria-expanded", "false");
+  }
+
+  function syncSnapPopoverSelection() {
+    if (!el.snapTimePopover || el.snapTimePopover.classList.contains("hidden") || !activeTimePickerTarget) {
+      return;
+    }
+    const targetInput = activeTimePickerTarget === "end" ? el.editEnd : el.editStart;
+    const sMin = PlannerAPI.hhmmToMinutes(el.editStart?.value) ?? 540;
+    const curMin = PlannerAPI.hhmmToMinutes(targetInput?.value) ?? sMin;
+    const curHour = Math.floor(curMin / 60);
+    const curMinute = curMin % 60;
+    const minStartHour = activeTimePickerTarget === "end" ? Math.floor(sMin / 60) : 0;
+
+    el.snapHourGrid?.querySelectorAll(".snap-hour-btn").forEach((btn) => {
+      const h = Number(btn.dataset.hour);
+      btn.classList.toggle("is-active", h === curHour);
+      btn.classList.toggle("is-before-start", activeTimePickerTarget === "end" && h < minStartHour);
+    });
+    el.snapTimePopover.querySelectorAll(".snap-min-btn").forEach((btn) => {
+      const m = Number(btn.dataset.min);
+      btn.classList.toggle("is-active", m === curMinute);
+    });
+  }
+
+  function openSnapTimePopover(target) {
+    if (!el.snapTimePopover) return;
+    if (activeTimePickerTarget === target && !el.snapTimePopover.classList.contains("hidden")) {
+      closeSnapTimePopover();
+      return;
+    }
+    activeTimePickerTarget = target;
+    if (el.snapPopoverTitle) {
+      el.snapPopoverTitle.textContent = target === "end" ? "종료 시각 선택" : "시작 시각 선택";
+    }
+    el.editStartPickerBtn?.classList.toggle("is-open", target === "start");
+    el.editEndPickerBtn?.classList.toggle("is-open", target === "end");
+    el.editStartPickerBtn?.setAttribute("aria-expanded", target === "start" ? "true" : "false");
+    el.editEndPickerBtn?.setAttribute("aria-expanded", target === "end" ? "true" : "false");
+    el.snapTimePopover.classList.remove("hidden");
+    syncSnapPopoverSelection();
+    requestAnimationFrame(() => {
+      el.snapTimePopover?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }
+
+  function syncCustomTimePickerUi() {
+    const sMin = PlannerAPI.hhmmToMinutes(el.editStart?.value) ?? 540;
+    const startFmt = formatKoreanAmPmTime(sMin);
+    if (el.editStartDisplay) el.editStartDisplay.textContent = startFmt.main;
+    if (el.editStartSub) el.editStartSub.textContent = startFmt.sub;
+
+    const isReminder = el.editType?.value === "reminder";
+    const hasEnd = !isReminder && Boolean(el.editHasEndCheck?.checked) && Boolean(el.editEnd?.value);
+    let activeDur = null;
+
+    if (hasEnd) {
+      const eMin = PlannerAPI.hhmmToMinutes(el.editEnd.value) ?? Math.min(1439, sMin + 30);
+      const dur = Math.max(0, eMin - sMin);
+      if (dur > 0) modalCurrentDurationMin = dur;
+      activeDur = dur;
+      const endFmt = formatKoreanAmPmTime(eMin);
+      if (el.editEndDisplay) el.editEndDisplay.textContent = endFmt.main;
+      if (el.editEndSub) el.editEndSub.textContent = endFmt.sub;
+      el.editEndPickerBtn?.classList.remove("is-disabled");
+      if (el.editDurationBadge) el.editDurationBadge.textContent = formatDurationKorean(dur);
+    } else {
+      if (el.editEndDisplay) el.editEndDisplay.textContent = "종료 시각 없음";
+      if (el.editEndSub) el.editEndSub.textContent = "탭하여 지정";
+      el.editEndPickerBtn?.classList.add("is-disabled");
+      if (el.editDurationBadge) el.editDurationBadge.textContent = "없음";
+    }
+
+    el.editDurationBar?.querySelectorAll(".dur-chip").forEach((chip) => {
+      const val = chip.dataset.dur;
+      const active = val === "none" ? !hasEnd : hasEnd && Number(val) === activeDur;
+      chip.classList.toggle("is-active", active);
+    });
+
+    syncSnapPopoverSelection();
+  }
+
+  function setModalStartMinutes(nextStartMin, { preserveDuration = true } = {}) {
+    const sMin = clamp(Math.round(nextStartMin), 0, 1435);
+    if (el.editStart) el.editStart.value = minToTimeStr(sMin);
+    if (preserveDuration && el.editHasEndCheck?.checked && el.editType?.value !== "reminder") {
+      const dur = Math.max(5, modalCurrentDurationMin || getDefaultDurationMin());
+      const eMin = clamp(sMin + dur, Math.min(1439, sMin + 5), 1439);
+      if (el.editEnd) el.editEnd.value = minToTimeStr(eMin);
+    }
+    syncCustomTimePickerUi();
+  }
+
+  function setModalEndMinutes(nextEndMin) {
+    const sMin = PlannerAPI.hhmmToMinutes(el.editStart?.value) ?? 540;
+    const minEnd = Math.min(1439, sMin + 5);
+    const eMin = clamp(Math.round(nextEndMin), minEnd, 1439);
+    if (el.editHasEndCheck) el.editHasEndCheck.checked = true;
+    if (el.editEnd) {
+      el.editEnd.disabled = false;
+      el.editEnd.value = minToTimeStr(eMin);
+    }
+    modalCurrentDurationMin = Math.max(5, eMin - sMin);
+    syncCustomTimePickerUi();
+  }
+
+  function applyModalDurationChip(durValue) {
+    if (durValue === "none") {
+      if (el.editHasEndCheck) el.editHasEndCheck.checked = false;
+      syncTimeFieldsVisibility();
+      if (activeTimePickerTarget === "end") closeSnapTimePopover();
+      return;
+    }
+    const dur = Number(durValue);
+    if (!Number.isFinite(dur) || dur <= 0) return;
+    modalCurrentDurationMin = dur;
+    if (el.editHasEndCheck) el.editHasEndCheck.checked = true;
+    const sMin = PlannerAPI.hhmmToMinutes(el.editStart?.value) ?? 540;
+    const eMin = clamp(sMin + dur, Math.min(1439, sMin + 5), 1439);
+    if (el.editEnd) el.editEnd.value = minToTimeStr(eMin);
+    syncTimeFieldsVisibility();
+  }
+
+  function initSnapTimePickerGrid() {
+    if (!el.snapHourGrid || el.snapHourGrid.childElementCount > 0) return;
+    const groups = [
+      { label: "새벽", hours: [0, 1, 2, 3, 4, 5] },
+      { label: "오전", hours: [6, 7, 8, 9, 10, 11] },
+      { label: "오후", hours: [12, 13, 14, 15, 16, 17] },
+      { label: "저녁", hours: [18, 19, 20, 21, 22, 23] }
+    ];
+    const frag = document.createDocumentFragment();
+    for (const group of groups) {
+      const row = document.createElement("div");
+      row.className = "snap-hour-row";
+      const tag = document.createElement("span");
+      tag.className = "snap-row-tag";
+      tag.textContent = group.label;
+      row.appendChild(tag);
+
+      const cells = document.createElement("div");
+      cells.className = "snap-hour-cells";
+      for (const h of group.hours) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "snap-hour-btn";
+        btn.dataset.hour = String(h);
+        btn.textContent = String(h).padStart(2, "0");
+        cells.appendChild(btn);
+      }
+      row.appendChild(cells);
+      frag.appendChild(row);
+    }
+    el.snapHourGrid.appendChild(frag);
+  }
+
   function syncTimeFieldsVisibility() {
     const isBacklog = Boolean(el.editBacklogCheck?.checked);
     const isReminder = el.editType?.value === "reminder";
@@ -4928,16 +5177,22 @@
     el.editTimeFields.classList.toggle("hidden", !timed);
     el.editStart.required = timed;
 
-    const endField = el.editEnd?.closest(".field");
+    const endField = el.editEndField || el.editEnd?.closest(".field");
     if (endField) endField.classList.toggle("hidden", isReminder);
+    el.editDurationBar?.classList.toggle("hidden", isReminder);
     const doneRow = el.editDone?.closest(".checkbox-row-inline");
     if (doneRow) doneRow.classList.toggle("hidden", !isItemCheckable(el.editType?.value || "schedule"));
+
+    if (!timed || (isReminder && activeTimePickerTarget === "end")) {
+      closeSnapTimePopover();
+    }
 
     if (isReminder) {
       el.editHasEndCheck.checked = false;
       el.editEnd.disabled = true;
       el.editEnd.value = "";
       el.editDone.checked = false;
+      syncCustomTimePickerUi();
       return;
     }
 
@@ -4946,8 +5201,10 @@
       el.editEnd.value = "";
     } else if (!el.editEnd.value && el.editStart.value) {
       const sMin = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? 540;
-      el.editEnd.value = minToTimeStr(Math.min(1439, sMin + getDefaultDurationMin()));
+      const dur = Math.max(5, modalCurrentDurationMin || getDefaultDurationMin());
+      el.editEnd.value = minToTimeStr(Math.min(1439, sMin + dur));
     }
+    syncCustomTimePickerUi();
   }
 
   function renderModalUntimedPicker(defaultStartMin, defaultEndMin) {
@@ -5000,12 +5257,14 @@
     el.editType.value = "schedule";
     if (el.editBacklogCheck) el.editBacklogCheck.checked = false;
     el.editTimedCheck.checked = true;
+    modalCurrentDurationMin = Math.max(5, endMin - startMin) || getDefaultDurationMin();
     el.editStart.value = minToTimeStr(Math.min(1439, startMin));
     el.editHasEndCheck.checked = true;
     el.editEnd.value = minToTimeStr(Math.min(1439, endMin));
     el.editDone.checked = false;
     el.editMemo.value = "";
     el.deleteEventModalBtn.classList.add("hidden");
+    closeSnapTimePopover();
     syncTimeFieldsVisibility();
     renderModalUntimedPicker(startMin, endMin);
     el.eventModal.classList.remove("hidden");
@@ -5024,6 +5283,10 @@
     el.editType.value = ev.type || "schedule";
     if (el.editBacklogCheck) el.editBacklogCheck.checked = isBacklog;
     el.editTimedCheck.checked = !isBacklog && ev.hasStartAt;
+    modalCurrentDurationMin =
+      ev.hasStartAt && ev.hasEndAt && ev.endMin !== null
+        ? Math.max(5, ev.endMin - ev.startMin)
+        : getDefaultDurationMin();
     el.editStart.value = ev.hasStartAt ? minToTimeStr(Math.min(1439, ev.startMin)) : "09:00";
     el.editHasEndCheck.checked = ev.hasStartAt && ev.hasEndAt && ev.endMin !== null;
     el.editEnd.value =
@@ -5033,6 +5296,7 @@
     el.editDone.checked = ev.done;
     el.editMemo.value = ev.memo || "";
     el.deleteEventModalBtn.classList.remove("hidden");
+    closeSnapTimePopover();
     syncTimeFieldsVisibility();
     el.eventModal.classList.remove("hidden");
     setTimeout(() => el.editTitle.focus(), 40);
@@ -6060,10 +6324,167 @@
     });
 
     // 일정 편집 모달 제어
+    initSnapTimePickerGrid();
     el.editBacklogCheck?.addEventListener("change", syncTimeFieldsVisibility);
     el.editTimedCheck.addEventListener("change", syncTimeFieldsVisibility);
     el.editHasEndCheck.addEventListener("change", syncTimeFieldsVisibility);
     el.editType.addEventListener("change", syncTimeFieldsVisibility);
+
+    el.editStart?.addEventListener("change", () => {
+      const sMin = PlannerAPI.hhmmToMinutes(el.editStart.value);
+      if (sMin !== null) setModalStartMinutes(sMin);
+    });
+    el.editEnd?.addEventListener("change", () => {
+      const eMin = PlannerAPI.hhmmToMinutes(el.editEnd.value);
+      if (eMin !== null) setModalEndMinutes(eMin);
+    });
+
+    el.editStartPickerBtn?.addEventListener("click", () => openSnapTimePopover("start"));
+    el.editEndPickerBtn?.addEventListener("click", () => {
+      if (!el.editHasEndCheck.checked) {
+        el.editHasEndCheck.checked = true;
+        syncTimeFieldsVisibility();
+      }
+      openSnapTimePopover("end");
+    });
+
+    const handleTriggerWheel = (target) => (e) => {
+      e.preventDefault();
+      const step = prefs.snapMin || 15;
+      const dir = e.deltaY < 0 ? 1 : -1;
+      if (target === "start") {
+        const cur = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? 540;
+        setModalStartMinutes(cur + dir * step);
+      } else {
+        if (!el.editHasEndCheck.checked) {
+          el.editHasEndCheck.checked = true;
+          syncTimeFieldsVisibility();
+        }
+        const sMin = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? 540;
+        const cur = PlannerAPI.hhmmToMinutes(el.editEnd.value) ?? Math.min(1439, sMin + modalCurrentDurationMin);
+        setModalEndMinutes(cur + dir * step);
+      }
+    };
+
+    const handleTriggerKeydown = (target) => (e) => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      const step = prefs.snapMin || 15;
+      const dir = e.key === "ArrowUp" ? 1 : -1;
+      if (target === "start") {
+        const cur = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? 540;
+        setModalStartMinutes(cur + dir * step);
+      } else {
+        if (!el.editHasEndCheck.checked) {
+          el.editHasEndCheck.checked = true;
+          syncTimeFieldsVisibility();
+        }
+        const sMin = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? 540;
+        const cur = PlannerAPI.hhmmToMinutes(el.editEnd.value) ?? Math.min(1439, sMin + modalCurrentDurationMin);
+        setModalEndMinutes(cur + dir * step);
+      }
+    };
+
+    el.editStartPickerBtn?.addEventListener("wheel", handleTriggerWheel("start"), { passive: false });
+    el.editEndPickerBtn?.addEventListener("wheel", handleTriggerWheel("end"), { passive: false });
+    el.editStartPickerBtn?.addEventListener("keydown", handleTriggerKeydown("start"));
+    el.editEndPickerBtn?.addEventListener("keydown", handleTriggerKeydown("end"));
+
+    el.editTimeFields?.querySelectorAll(".time-step-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const stepVal = btn.dataset.timeStep;
+        if (stepVal === "now") {
+          const snapUnit = prefs.snapMin || 15;
+          const snappedNow = Math.round(getNowKstMinutes() / snapUnit) * snapUnit;
+          setModalStartMinutes(clamp(snappedNow, 0, 1435));
+          return;
+        }
+        const delta = Number(stepVal);
+        if (!Number.isFinite(delta)) return;
+        const cur = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? 540;
+        setModalStartMinutes(cur + delta);
+      });
+    });
+
+    el.editDurationBar?.querySelectorAll(".dur-chip").forEach((chip) => {
+      chip.addEventListener("click", () => applyModalDurationChip(chip.dataset.dur));
+    });
+
+    el.snapPopoverCloseBtn?.addEventListener("click", closeSnapTimePopover);
+    el.snapTimePopover?.addEventListener("click", (e) => {
+      const hourBtn = e.target.closest(".snap-hour-btn");
+      if (hourBtn) {
+        const h = Number(hourBtn.dataset.hour);
+        const target = activeTimePickerTarget || "start";
+        const targetInput = target === "end" ? el.editEnd : el.editStart;
+        const sMin = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? 540;
+        const curMin = PlannerAPI.hhmmToMinutes(targetInput.value) ?? sMin;
+        const nextMin = h * 60 + (curMin % 60);
+        if (target === "end") {
+          setModalEndMinutes(nextMin);
+        } else {
+          setModalStartMinutes(nextMin);
+        }
+        return;
+      }
+
+      const minBtn = e.target.closest(".snap-min-btn");
+      if (minBtn) {
+        const m = Number(minBtn.dataset.min);
+        const target = activeTimePickerTarget || "start";
+        const targetInput = target === "end" ? el.editEnd : el.editStart;
+        const sMin = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? 540;
+        const curMin = PlannerAPI.hhmmToMinutes(targetInput.value) ?? sMin;
+        const nextMin = Math.floor(curMin / 60) * 60 + m;
+        if (target === "end") {
+          setModalEndMinutes(nextMin);
+        } else {
+          setModalStartMinutes(nextMin);
+        }
+        closeSnapTimePopover();
+        return;
+      }
+
+      const fineBtn = e.target.closest(".snap-fine-btn");
+      if (fineBtn) {
+        const delta = Number(fineBtn.dataset.fine);
+        const target = activeTimePickerTarget || "start";
+        const targetInput = target === "end" ? el.editEnd : el.editStart;
+        const sMin = PlannerAPI.hhmmToMinutes(el.editStart.value) ?? 540;
+        const curMin = PlannerAPI.hhmmToMinutes(targetInput.value) ?? sMin;
+        if (target === "end") {
+          setModalEndMinutes(curMin + delta);
+        } else {
+          setModalStartMinutes(curMin + delta);
+        }
+        return;
+      }
+
+      const presetBtn = e.target.closest(".snap-preset-btn");
+      if (presetBtn) {
+        const presetMin = PlannerAPI.hhmmToMinutes(presetBtn.dataset.quickTime);
+        if (presetMin !== null) {
+          if (activeTimePickerTarget === "end") {
+            setModalEndMinutes(presetMin);
+          } else {
+            setModalStartMinutes(presetMin);
+          }
+          closeSnapTimePopover();
+        }
+      }
+    });
+
+    el.eventModal?.addEventListener("click", (e) => {
+      if (!activeTimePickerTarget || el.snapTimePopover?.classList.contains("hidden")) return;
+      if (
+        e.target.closest("#snapTimePopover") ||
+        e.target.closest("#editStartPickerBtn") ||
+        e.target.closest("#editEndPickerBtn")
+      ) {
+        return;
+      }
+      closeSnapTimePopover();
+    });
 
     el.eventForm.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -6303,6 +6724,16 @@
       }
     });
 
+    el.authGateLocalBtn?.addEventListener("click", async () => {
+      PlannerAPI.saveSettings({ mode: "local", localExplicit: true });
+      supabaseSession = null;
+      await disconnectRealtime();
+      updateSupabaseAuthUi();
+      updateApiBadge();
+      await Promise.all([loadDay(currentDate), loadDdaysQuietly()]);
+      showToast("로컬 모드로 시작했습니다.", "🧪");
+    });
+
     el.apiSettingsForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!supabaseSession) {
@@ -6345,6 +6776,10 @@
       }
 
       if (e.key === "Escape") {
+        if (el.snapTimePopover && !el.snapTimePopover.classList.contains("hidden")) {
+          closeSnapTimePopover();
+          return;
+        }
         setIslandExpanded(false);
         clearTouchDraftSlot();
         const wasEventModalOpen = el.eventModal && !el.eventModal.classList.contains("hidden");
