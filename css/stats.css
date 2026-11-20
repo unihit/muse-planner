@@ -686,7 +686,22 @@ main {
 
 .calendar .progress {
   height: 4px;
-  margin-top: 6px;
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+.day-skip {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+  color: var(--amber);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+  vertical-align: baseline;
+  white-space: nowrap;
 }
 
 /* --------------------------------------------------------------- detail */

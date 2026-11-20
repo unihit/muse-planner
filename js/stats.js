@@ -132,8 +132,14 @@
       button.dataset.date = date;
       button.append(text('span', day, 'day-number'));
       const ratio = date > today ? rows.length ? `예정 ${rows.length}` : '—' : stat.total ? `${stat.done}/${stat.total}` : rows.length ? '대상 없음' : '—';
-      button.append(text('span', ratio, 'day-ratio'));
-      if (stat.skipped) button.append(text('span', `건너뜀 ${stat.skipped}`, 'day-ratio'));
+      const ratioEl = text('span', ratio, 'day-ratio');
+      if (stat.skipped) {
+        const badge = text('span', `↷${stat.skipped}`, 'day-skip');
+        badge.title = `건너뜀 ${stat.skipped}개`;
+        badge.setAttribute('aria-label', `건너뜀 ${stat.skipped}개`);
+        ratioEl.append(badge);
+      }
+      button.append(ratioEl);
       if (date <= today && stat.total) {
         const bar = text('div', '', 'progress');
         const fill = progress(stat.rate);
